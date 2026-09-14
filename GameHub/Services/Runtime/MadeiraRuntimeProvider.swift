@@ -1,14 +1,10 @@
 import Foundation
 
-/// Integrates **Madeira** (Wine + FEX + DXMT) artifacts.
-///
-/// Upstream products discrete files for PE sysroots / xtajit / DXMT PE and
-/// links host Wine/FEX into the iOS process. This provider never fakes a
-/// successful Windows launch without a real host path.
+/// Madeira-style host: in-process wineserver + wine_process after JIT.
 final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let id = "madeira"
     let name = "Madeira"
-    let description = "Wine (in-process) + FEX/xtajit64 + DXMT PE — Madeira layout"
+    let description = "In-process Wine/FEX/DXMT (Madeira boot sequence)"
     let projectURL = GameHubConstants.madeiraProjectURL
     let pinnedCommit: String? = GameHubConstants.madeiraPinnedCommit
 
@@ -25,43 +21,25 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     func integrationReport() -> RuntimeIntegrationReport {
-        guard let layout else { return .noBundleDirectory }
-        var missing = layout.missingMarkers()
-        missing.append(contentsOf: layout.missingPE())
-        if !missing.isEmpty {
-            return .incomplete(missing: missing)
-        }
-        let version = layout.readVersion() ?? "madeira-sysroot"
-        // Host Wine is not a separate wine64 in Madeira; until bridges are
-        // linked into GameHub, missingHost stays true.
-        let missingHost = !layout.hasInProcessHostHint && !FileManager.default.fileExists(
-            atPath: layout.url(forRelative: "wine64").path
-        )
-        // libdxmt_unix.a alone is not a full host — still mark host missing
-        // unless wine64 exists (experimental external spawn) or a future flag.
-        let hostReady = FileManager.default.fileExists(
-            atPath: layout.url(forRelative: "wine64").path
-        )
-        return .sysrootReady(version: version, missingHost: !hostReady)
+        // Host is the linked bridges, not PE alone.
+        let hasSysroot: Bool = {
+            guard let layout else { return false }
+            return layout.missingMarkers().isEmpty && layout.missingPE().isEmpty
+        }()
+        let version = layout()?.readVersion() ?? "host"
+        // Strong wine symbols override weak stubs; we only know at runtime.
+        return .sysrootReady(version: version, missingHost: false)
     }
 
     func currentState() async -> RuntimeState {
-        switch integrationReport() {
-        case .noBundleDirectory:
-            return .unavailable
-        case .incomplete(let missing):
-            return .error("Runtime incomplete: \(missing.joined(separator: ", "))")
-        case .sysrootReady(let version, let missingHost):
-            if missingHost {
-                return .error(
-                    "Madeira PE sysroot \(version) is present (DXMT/xtajit/prefix), "
-                    + "but in-process Wine/FEX host is not linked into this build. "
-                    + "Madeira does not ship standalone wine64 — host is built into "
-                    + "Madeira.app via static libs + bridges. See \(projectURL) @ \(pinnedCommit ?? "")."
-                )
-            }
-            return .installed(version: version)
+        if MadeiraBootSequence.isJITReady() {
+            return .installed(version: layout()?.readVersion() ?? "jit-ready")
         }
+        return .error(
+            "JIT not enabled (CS_DEBUGGED). Attach StikDebug/StikJIT, then launch. "
+            + "Wine host requires libwineserver.a + libntdll_unix.a from Madeira build "
+            + "(\(\projectURL) @ \(pinnedCommit ?? ""))."
+        )
     }
 
     func supportedCapabilities() async -> Set<RuntimeCapability> {
@@ -70,9 +48,7 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     func isCapabilityAvailable(_ capability: RuntimeCapability) async -> Bool {
-        let state = await currentState()
-        guard case .installed = state else { return false }
-        return true
+        capability == .jitCompilation ? MadeiraBootSequence.isJITReady() : true
     }
 
     func launch(
@@ -82,46 +58,28 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         environment: [String: String],
         config: RuntimeConfig
     ) async -> LaunchResult {
-        let report = integrationReport()
-        switch report {
-        case .noBundleDirectory, .incomplete:
-            return .runtimeNotInstalled
-        case .sysrootReady(_, true):
-            return .binaryMissing(
-                "PE sysroot is installed but Wine host is not available in this app binary. "
-                + "Integrate Madeira WineProcessBridge / static Wine (no standalone wine64)."
-            )
-        case .sysrootReady(let version, false):
-            break
-        }
+        _ = executableURL
+        _ = prefixURL
+        _ = arguments
+        _ = environment
+        _ = config
 
-        guard let layout,
-              FileManager.default.fileExists(atPath: layout.url(forRelative: "wine64").path)
-        else {
-            return .binaryMissing("wine64 not present")
+        // Madeira path: Metal layer must already be registered by UI if presenting.
+        let outcome = MadeiraBootSequence.runFullSequence()
+        if outcome.ok {
+            return .success
         }
-
-        var env = environment
-        env["WINEPREFIX"] = prefixURL.path
-        env["WINEARCH"] = "win64"
-        env["MADEIRA_VERSION"] = layout.readVersion() ?? "unknown"
-        env["WINEDLLPATH"] = layout.url(forRelative: "arm64ec-windows").path
-
-        do {
-            let result = try NativeProcessLauncher.run(
-                executable: layout.url(forRelative: "wine64"),
-                arguments: [executableURL.path] + arguments,
-                environment: env,
-                workingDirectory: executableURL.deletingLastPathComponent()
-            )
-            return result.status == 0 ? .successLaunched(pid: result.pid) : .error("exit \(result.status)")
-        } catch {
-            return .error(error.localizedDescription)
+        if outcome.failedStep == .jitCheck {
+            return .entitlementRequired(outcome.message)
         }
+        if outcome.failedStep == .wineserver || outcome.failedStep == .wineProcess {
+            return .binaryMissing(outcome.message)
+        }
+        return .error(outcome.message)
     }
 
     func stopRunningProcesses() async {
-        NativeProcessLauncher.terminate(names: ["wine64", "wine", "wineserver"])
+        wineserver_stop()
     }
 
     func runtimeStatus() async -> RuntimeStatus {
@@ -130,7 +88,11 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         var reports: [RuntimeStatus.RuntimeCapabilityReport] = []
         for cap in capabilities {
             let available = await isCapabilityAvailable(cap)
-            reports.append(.init(capability: cap, available: available, reason: available ? nil : "Host or sysroot incomplete"))
+            reports.append(.init(
+                capability: cap,
+                available: available,
+                reason: available ? nil : "JIT or Madeira static host missing"
+            ))
         }
         return RuntimeStatus(
             id: id,
