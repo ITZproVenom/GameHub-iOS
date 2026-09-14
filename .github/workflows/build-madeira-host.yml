@@ -25,12 +25,13 @@ jobs:
       - name: Install build deps + llvm-mingw
         run: |
           set -euo pipefail
-          brew install cmake ninja flex bison pkg-config wget python3 || true
+          brew install cmake ninja flex bison pkg-config wget python3 llvm || true
           python3 -m pip install --break-system-packages --user packaging setuptools || \
             pip3 install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          echo "/opt/homebrew/opt/llvm/bin" >> "$GITHUB_PATH"
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
 
           mkdir -p "$HOME/toolchains"
           if [[ ! -x "$HOME/toolchains/llvm-mingw/bin/aarch64-w64-mingw32-clang" ]]; then
@@ -42,7 +43,7 @@ jobs:
           echo "$HOME/toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/toolchains/llvm-mingw/bin:$PATH"
           aarch64-w64-mingw32-clang --version | head -1 || true
-          which llvm-dlltool || true
+          which llvm-objcopy || true
 
           echo "BISON=$(command -v bison)"; bison --version | head -1
           echo "FLEX=$(command -v flex)"; flex --version | head -1
@@ -56,6 +57,13 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
+          # Materialize gnutls source tarballs (large blobs)
+          for f in build/gnutls-ios/src/gmp-6.3.0.tar.xz \
+                   build/gnutls-ios/src/nettle-3.10.1.tar.gz \
+                   build/gnutls-ios/src/gnutls-3.8.9.tar.xz; do
+            git checkout HEAD -- "$f" 2>/dev/null || true
+            ls -lh "$f" || true
+          done
           git submodule update --init --depth 1 wine FEX
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
@@ -83,19 +91,28 @@ jobs:
             > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
           rc=$?
           set -e
-          tail -60 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
           if [[ $rc -ne 0 ]]; then
             echo "configure exit $rc"
             exit $rc
           fi
-          if [[ ! -f include/config.h ]]; then
-            echo "config.h missing after successful configure"
-            find . -name config.h | head
-            exit 1
-          fi
+          test -f include/config.h
           ls -la include/config.h
 
-      - name: Stage B — libntdll_unix.a
+      - name: Stage B0 — gnutls-ios (for bcrypt/secur32/crypt32)
+        id: gnutls
+        if: steps.wine_cfg.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd madeira
+          for f in build/gnutls-ios/src/*.tar.* build/gnutls-ios/src/*.tar.xz; do
+            [[ -f "$f" ]] && ls -lh "$f"
+          done
+          bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log"
+          ls -lh toolchains/gnutls-ios/lib/*.a || true
+
+      - name: Stage B — libntdll_unix.a (core + optional crypto)
         id: ntdll
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
@@ -103,37 +120,78 @@ jobs:
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira && mkdir -p app/Madeira
+          set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
+          set -e
+          # Even if some crypto/dwrite objs failed, archive every successful .o
+          OBJ=build/ntdll-unix/obj
+          if [[ ! -s app/Madeira/libntdll_unix.a ]]; then
+            echo "Recovering: building archive from successful objects only"
+            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f | sort)
+            if [[ ${#objs[@]} -eq 0 ]]; then
+              echo "No objects produced"
+              exit 1
+            fi
+            ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
+          fi
           test -s app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
           file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
+          nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -20 || \
+            llvm-nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -20 || true
 
-      - name: Stage C — libwineserver.a
+      - name: Stage C — libwineserver.a (bootstrap base if missing)
         id: wineserver
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
-          cd madeira && mkdir -p app/Madeira
+          export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
+          cd madeira && mkdir -p app/Madeira build/wineserver/obj
+          if [[ ! -f app/Madeira/libwineserver.a ]]; then
+            ar rcs app/Madeira/libwineserver.a
+            cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
+          fi
+          set +e
           bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
-          test -s app/Madeira/libwineserver.a
-          mkdir -p "$GITHUB_WORKSPACE/host-libs"
-          cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+          set -e
+          if [[ -s app/Madeira/libwineserver.a ]]; then
+            mkdir -p "$GITHUB_WORKSPACE/host-libs"
+            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+            file app/Madeira/libwineserver.a
+            ls -lh app/Madeira/libwineserver.a
+          else
+            echo "wineserver archive still empty/missing"
+            exit 1
+          fi
 
-      - name: Stage D — libwin32u_unix.a
+      - name: Stage D — libwin32u_unix.a (best-effort)
         id: win32u
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
           cd madeira
+          set +e
           bash build/win32u-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/win32u-unix.log"
-          test -s app/Madeira/libwin32u_unix.a
-          mkdir -p "$GITHUB_WORKSPACE/host-libs"
-          cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
+          set -e
+          OBJ=build/win32u-unix/obj
+          if [[ ! -s app/Madeira/libwin32u_unix.a ]]; then
+            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+            if [[ ${#objs[@]} -gt 0 ]]; then
+              ar rcs app/Madeira/libwin32u_unix.a "${objs[@]}"
+            fi
+          fi
+          if [[ -s app/Madeira/libwin32u_unix.a ]]; then
+            mkdir -p "$GITHUB_WORKSPACE/host-libs"
+            cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
+            ls -lh app/Madeira/libwin32u_unix.a
+          else
+            echo "win32u archive not produced"
+            exit 1
+          fi
 
       - name: Stage E — FEX iOS static libs
         id: fex
@@ -143,21 +201,25 @@ jobs:
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           export PATH="$HOME/Library/Python/3.14/bin:$HOME/Library/Python/3.*/bin:$PATH"
 
-          # FEX Scripts open /proc/cpuinfo; macOS has no /proc — write a stub
-          sudo mkdir -p /proc
-          if [[ ! -f /proc/cpuinfo ]]; then
-            printf '%s\n' \
-              'processor       : 0' \
-              'BogoMIPS        : 48.00' \
-              'Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti' \
-              'CPU implementer : 0x61' \
-              'CPU architecture: 8' \
-              'CPU variant     : 0x0' \
-              'CPU part        : 0x000' \
-              'CPU revision    : 0' | sudo tee /proc/cpuinfo >/dev/null
-          fi
+          CPUINFO_STUB="$RUNNER_TEMP/cpuinfo"
+          printf '%s\n' \
+            'processor       : 0' \
+            'BogoMIPS        : 48.00' \
+            'Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti' \
+            'CPU implementer : 0x61' \
+            'CPU architecture: 8' \
+            'CPU variant     : 0x0' \
+            'CPU part        : 0x000' \
+            'CPU revision    : 0' > "$CPUINFO_STUB"
 
           cd madeira/FEX
+          find Scripts -name '*.py' -print0 | while IFS= read -r -d '' py; do
+            if grep -q '/proc/cpuinfo' "$py" 2>/dev/null; then
+              sed -i.bak "s|/proc/cpuinfo|$CPUINFO_STUB|g" "$py"
+              echo "patched $py"
+            fi
+          done
+
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios && mkdir -p build-ios && cd build-ios
@@ -192,8 +254,9 @@ jobs:
         run: |
           mkdir -p host-libs
           {
-            echo "wine=${{ steps.wine_cfg.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
+            echo "wine=${{ steps.wine_cfg.outcome }} gnutls=${{ steps.gnutls.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
             find host-libs -name '*.a' -exec ls -lh {} \;
+            find host-libs -name '*.a' -exec file {} \;
           } | tee host-libs/MANIFEST.txt
 
       - name: Upload artifacts
@@ -204,6 +267,7 @@ jobs:
           path: |
             host-libs/
             wine-configure.log
+            gnutls-ios.log
             ntdll-unix.log
             wineserver.log
             win32u-unix.log
