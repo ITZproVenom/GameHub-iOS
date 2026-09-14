@@ -108,7 +108,6 @@ jobs:
       - name: Archive unsigned
         run: |
           set -euo pipefail
-          # Host .a force_load only when present (empty EXTRA is fine)
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
           EXTRA_LD=""
           for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libdxmt_combined.a; do
@@ -207,16 +206,35 @@ jobs:
             echo ""
             echo "PE sysroots + prefix-template + real PrefixExtractor (-lz)."
             echo "Host static libs linked when madeira-host CI produces them."
-            echo "Unsigned — AltStore / Sideloadly / TrollStore + JIT debugger."
+            echo ""
+            echo "### Install"
+            echo "Unsigned IPA — use **AltStore** / **Sideloadly** / **TrollStore** + JIT debugger (StikDebug)."
+            echo ""
+            echo "**Always-latest download:** [GameHub.ipa (latest)](https://github.com/ITZproVenom/GameHub-iOS/releases/latest/download/GameHub.ipa)"
           } > release_notes.md
 
-      - name: Publish GitHub Release
+      - name: Publish versioned GitHub Release
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.name }}
           prerelease: true
+          body_path: release_notes.md
+          files: build/GameHub.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stable always-updated release (same pattern as GameStream)
+      - name: Publish / update latest release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: GameHub iOS — Latest IPA
+          prerelease: false
+          make_latest: true
           body_path: release_notes.md
           files: build/GameHub.ipa
           fail_on_unmatched_files: true
