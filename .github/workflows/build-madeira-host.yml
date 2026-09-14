@@ -25,12 +25,15 @@ jobs:
         run: |
           set -euo pipefail
           brew install cmake ninja flex bison pkg-config wget python3 || true
-          pip3 install --user packaging || python3 -m pip install --user packaging || true
+          # PEP 668: Homebrew Python is externally managed; force install for CI scripts
+          python3 -m pip install --break-system-packages --user packaging setuptools || \
+            pip3 install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           echo "BISON=$(command -v bison)"; bison --version | head -1
           echo "FLEX=$(command -v flex)"; flex --version | head -1
+          python3 -c "from packaging.version import Version; print('packaging OK', Version('1.0'))" || true
 
       - name: Clone Madeira + wine + FEX
         run: |
@@ -123,8 +126,9 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          pip3 install --user packaging || true
-          export PATH="$HOME/Library/Python/3.14/bin:$PATH"
+          # Ensure packaging is available for FEX Scripts/*.py
+          python3 -m pip install --break-system-packages --user packaging setuptools || true
+          export PATH="$HOME/Library/Python/3.14/bin:$HOME/Library/Python/3.*/bin:$PATH"
           cd madeira/FEX
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
