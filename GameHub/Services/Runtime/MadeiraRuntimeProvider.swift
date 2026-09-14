@@ -11,8 +11,19 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     private let installedVersion: String?
 
     init(binaryDirectory: URL? = nil) {
-        self.binaryDirectory = binaryDirectory
-        self.installedVersion = binaryDirectory.flatMap { dir in
+        if let binaryDirectory {
+            self.binaryDirectory = binaryDirectory
+        } else {
+            let candidates: [URL] = [
+                Bundle.main.resourceURL?.appendingPathComponent("Runtime", isDirectory: true),
+                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+                    .appendingPathComponent("GameHubData/Runtime", isDirectory: true),
+            ].compactMap { $0 }
+            self.binaryDirectory = candidates.first(where: {
+                FileManager.default.fileExists(atPath: $0.path)
+            })
+        }
+        self.installedVersion = self.binaryDirectory.flatMap { dir in
             let versionFile = dir.appendingPathComponent("VERSION")
             guard let data = try? Data(contentsOf: versionFile),
                   let version = String(data: data, encoding: .utf8)?
@@ -24,8 +35,6 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
             return version
         }
     }
-
-    // MARK: - Runtime State
 
     func currentState() async -> RuntimeState {
         guard let binaryDirectory else {
@@ -55,8 +64,6 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         return .installed(version: version)
     }
 
-    // MARK: - Capabilities
-
     func supportedCapabilities() async -> Set<RuntimeCapability> {
         [.wineExecution, .x86Translation, .d3d11ToMetal, .audioOutput, .inputCapture,
          .jitCompilation, .dynamicLibraryLoading]
@@ -74,8 +81,6 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
             return await jitEntitlementEnabled()
         }
     }
-
-    // MARK: - Launch
 
     func launch(
         executableURL: URL,
@@ -114,32 +119,35 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         env["DXMT_ENABLED"] = config.dxmtEnabled ? "1" : "0"
         env["DXVK_ENABLED"] = config.dxvkEnabled ? "1" : "0"
 
-        let task = Process()
-        task.executableURL = fexBinary
-        task.arguments = [executableURL.path] + arguments
-        task.environment = env
-        task.currentDirectoryURL = executableURL.deletingLastPathComponent()
+        let wineBinary = binaryDirectory.appendingPathComponent("wine64")
+        let launchBinary: URL
+        let launchArguments: [String]
+        if FileManager.default.fileExists(atPath: wineBinary.path) {
+            launchBinary = wineBinary
+            launchArguments = [executableURL.path] + arguments
+        } else {
+            launchBinary = fexBinary
+            launchArguments = [executableURL.path] + arguments
+        }
 
         do {
-            try task.run()
-            task.waitUntilExit()
-
-            if task.terminationStatus == 0 {
+            let result = try NativeProcessLauncher.run(
+                executable: launchBinary,
+                arguments: launchArguments,
+                environment: env,
+                workingDirectory: executableURL.deletingLastPathComponent()
+            )
+            if result.status == 0 {
                 return .success
-            } else {
-                return .error("Process exited with status \(task.terminationStatus)")
             }
+            return .error("Runtime process exited with status \(result.status)")
         } catch {
-            return .error("Failed to launch process: \(error.localizedDescription)")
+            return .error("Failed to launch runtime process: \(error.localizedDescription)")
         }
     }
 
     func stopRunningProcesses() async {
-        let running = Process()
-        running.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        running.arguments = ["wine64", "FEXInterpreter"]
-        try? running.run()
-        running.waitUntilExit()
+        NativeProcessLauncher.terminate(names: ["wine64", "FEXInterpreter", "wine"])
     }
 
     func runtimeStatus() async -> RuntimeStatus {
@@ -170,8 +178,6 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
             lastChecked: Date()
         )
     }
-
-    // MARK: - Private
 
     private func jitEntitlementEnabled() async -> Bool {
         #if os(iOS)
