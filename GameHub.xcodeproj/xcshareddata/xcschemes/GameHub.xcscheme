@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A50000000000000000000001"
+               BlueprintIdentifier = "A10000000000000000000002"
                BuildableName = "GameHub.app"
                BlueprintName = "GameHub"
                ReferencedContainer = "container:GameHub.xcodeproj">
@@ -33,7 +33,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A50000000000000000000002"
+               BlueprintIdentifier = "A10000000000000000000003"
                BuildableName = "GameHubTests.xctest"
                BlueprintName = "GameHubTests"
                ReferencedContainer = "container:GameHub.xcodeproj">
@@ -55,7 +55,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A50000000000000000000001"
+            BlueprintIdentifier = "A10000000000000000000002"
             BuildableName = "GameHub.app"
             BlueprintName = "GameHub"
             ReferencedContainer = "container:GameHub.xcodeproj">
@@ -72,7 +72,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A50000000000000000000001"
+            BlueprintIdentifier = "A10000000000000000000002"
             BuildableName = "GameHub.app"
             BlueprintName = "GameHub"
             ReferencedContainer = "container:GameHub.xcodeproj">
