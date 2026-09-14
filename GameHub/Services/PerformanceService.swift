@@ -62,7 +62,7 @@ final class PerformanceMonitor: ObservableObject {
     }
 
     @objc private func tick(link: CADisplayLink) {
-        guard let last = lastFrameTime else {
+        guard lastFrameTime != nil else {
             lastFrameTime = link.targetTimestamp
             lastReportingTime = link.timestamp
             return
@@ -97,8 +97,9 @@ final class PerformanceMonitor: ObservableObject {
             }
         }
         guard result == KERN_SUCCESS else { return 0 }
-        let totalTicks = Double(info.user_time.ticks + info.system_time.ticks)
-        return totalTicks
+        let user = Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
+        let system = Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
+        return user + system
     }
 
     private func currentMemoryUsageMB() -> Double {
