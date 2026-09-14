@@ -6,11 +6,9 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-madeira-host.yml"
-      - "GameHub/Native/Madeira/**"
 
 permissions:
   contents: read
-  actions: write
 
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
