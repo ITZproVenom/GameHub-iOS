@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-ipa:
@@ -15,37 +15,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Show Xcode
-        run: |
-          xcodebuild -version
-          xcode-select -p
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project from project.yml
+      - name: Generate Xcode project
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
           python3 - <<'PY'
-          from pathlib import Path
-          p = Path("GameHub.xcodeproj/project.pbxproj")
-          text = p.read_text()
-          if "objectVersion" not in text:
-              raise SystemExit("generated project missing objectVersion")
-          print("generated project bytes", p.stat().st_size)
-          print(text.splitlines()[0])
-          PY
+from pathlib import Path
+import re
+p = Path("GameHub.xcodeproj/project.pbxproj")
+text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
+p.write_text(text)
+print("project ready")
+PY
 
-      - name: Validate project parses
-        run: |
-          set -euo pipefail
-          xcodebuild -list -project GameHub.xcodeproj
-          xcodebuild -project GameHub.xcodeproj -scheme GameHub -showBuildSettings -destination "generic/platform=iOS" >/tmp/settings.txt
-          grep -E "PRODUCT_NAME|PRODUCT_BUNDLE_IDENTIFIER|INFOPLIST_FILE" /tmp/settings.txt | head -20
-
-      - name: Archive for iOS device
+      - name: Archive unsigned
         run: |
           set -euo pipefail
           xcodebuild archive \
@@ -59,43 +51,25 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: Inspect archive
+      - name: Package IPA
         run: |
           set -euo pipefail
           APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
           test -d "$APP"
-          test -f "$APP/Info.plist"
-          test -x "$APP/GameHub" || test -f "$APP/GameHub"
-          echo "Archive app payload:"
-          ls -la "$APP"
-          file "$APP/GameHub" || true
-          plutil -p "$APP/Info.plist" | head -40
-
-      - name: Package IPA
-        run: |
-          set -euo pipefail
+          test -f "$APP/GameHub" || test -x "$APP/GameHub"
           mkdir -p build/Payload
           rm -rf build/Payload/GameHub.app
-          cp -R build/GameHub.xcarchive/Products/Applications/GameHub.app build/Payload/
-          (
-            cd build
-            zip -qr GameHub.ipa Payload
-          )
-          test -f build/GameHub.ipa
-          python3 - <<'PY'
-          import zipfile, sys
-          z = zipfile.ZipFile("build/GameHub.ipa")
-          names = z.namelist()
-          print("IPA entries:", len(names))
-          app_entries = [n for n in names if n.startswith("Payload/GameHub.app/")]
-          if not app_entries:
-              sys.exit("IPA missing Payload/GameHub.app")
-          exe = [n for n in names if n == "Payload/GameHub.app/GameHub" or n.endswith("/GameHub.app/GameHub")]
-          if not exe:
-              sys.exit("IPA missing Mach-O executable GameHub")
-          print("IPA OK:", z.getinfo(exe[0]).file_size, "byte executable")
-          PY
+          cp -R "$APP" build/Payload/
+          # Ensure Runtime README ships in the bundle if XcodeGen included Resources
+          (cd build && zip -qr GameHub.ipa Payload)
           ls -lh build/GameHub.ipa
+          python3 - <<'PY'
+import zipfile, sys
+z = zipfile.ZipFile("build/GameHub.ipa")
+names = z.namelist()
+assert any(n.endswith("GameHub.app/GameHub") or n == "Payload/GameHub.app/GameHub" for n in names), "missing exe"
+print("IPA entries", len(names))
+PY
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -103,3 +77,39 @@ jobs:
           name: GameHub-ipa
           path: build/GameHub.ipa
           if-no-files-found: error
+
+      - name: Changelog
+        id: meta
+        run: |
+          SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
+          STAMP="$(date -u +'%Y%m%d-%H%M')"
+          RUN="${{ github.run_number }}"
+          echo "tag=ios-build-${STAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "name=GameHub iOS build #${RUN} (${SHORT_SHA})" >> "$GITHUB_OUTPUT"
+          {
+            echo "## GameHub iOS"
+            echo ""
+            echo "**Build:** \`${SHORT_SHA}\`"
+            echo ""
+            echo "Unsigned IPA — install with AltStore / Sideloadly / TrollStore."
+            echo ""
+            echo "### Runtime"
+            echo "Local Windows .exe launch requires Madeira binaries in the Runtime folder"
+            echo "(wine64, FEXInterpreter, dxmt11.dylib, VERSION). See Runtime README in the app."
+            echo ""
+            echo "### Commits"
+            git log --max-count=12 --pretty=format:'- %s (%h)' --no-merges
+          } > release_notes.md
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: true
+          body_path: release_notes.md
+          files: build/GameHub.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

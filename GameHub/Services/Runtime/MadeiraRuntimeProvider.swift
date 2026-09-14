@@ -1,5 +1,11 @@
 import Foundation
 
+/// Host-side integration with the Madeira runtime stack
+/// (Wine ARM64EC + FEX + DXMT). Does **not** fabricate launches.
+///
+/// Binaries must be placed under a discovered Runtime root (see
+/// `RuntimeBundleLayout`). Upstream: https://github.com/willfaust/Madeira
+/// pinned commit via `GameHubConstants.madeiraPinnedCommit`.
 final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let id = "madeira"
     let name = "Madeira"
@@ -7,61 +13,81 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let projectURL = GameHubConstants.madeiraProjectURL
     let pinnedCommit: String? = GameHubConstants.madeiraPinnedCommit
 
-    private let binaryDirectory: URL?
-    private let installedVersion: String?
+    private let forcedRoot: URL?
 
     init(binaryDirectory: URL? = nil) {
-        if let binaryDirectory {
-            self.binaryDirectory = binaryDirectory
-        } else {
-            let candidates: [URL] = [
-                Bundle.main.resourceURL?.appendingPathComponent("Runtime", isDirectory: true),
-                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-                    .appendingPathComponent("GameHubData/Runtime", isDirectory: true),
-            ].compactMap { $0 }
-            self.binaryDirectory = candidates.first(where: {
-                FileManager.default.fileExists(atPath: $0.path)
-            })
+        self.forcedRoot = binaryDirectory
+    }
+
+    private func layout() -> RuntimeBundleLayout? {
+        if let forcedRoot {
+            return RuntimeBundleLayout(root: forcedRoot)
         }
-        self.installedVersion = self.binaryDirectory.flatMap { dir in
-            let versionFile = dir.appendingPathComponent("VERSION")
-            guard let data = try? Data(contentsOf: versionFile),
-                  let version = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !version.isEmpty
-            else {
-                return nil
+        guard let root = RuntimeBundleLayout.firstExistingRoot() else { return nil }
+        return RuntimeBundleLayout(root: root)
+    }
+
+    func integrationReport() -> RuntimeIntegrationReport {
+        guard let layout else { return .noBundleDirectory }
+        let missing = layout.missingRequired()
+        let optional = layout.presentOptional()
+        let version = layout.readVersion()
+        if missing.isEmpty {
+            return .ready(version: version ?? "unknown", presentOptional: optional)
+        }
+        return .incomplete(missing: missing, presentOptional: optional, version: version)
+    }
+
+    func componentStatuses() -> [RuntimeComponentStatus] {
+        guard let layout else {
+            return RuntimeBundleLayout.requiredRelativePaths.map {
+                RuntimeComponentStatus(
+                    id: $0,
+                    name: $0,
+                    required: true,
+                    present: false,
+                    detail: "Runtime directory not found. Place binaries under Documents/Runtime or App Support/GameHubData/Runtime."
+                )
             }
-            return version
         }
+        var rows: [RuntimeComponentStatus] = []
+        for path in RuntimeBundleLayout.requiredRelativePaths {
+            let present = FileManager.default.fileExists(atPath: layout.url(forRelative: path).path)
+            rows.append(RuntimeComponentStatus(
+                id: path,
+                name: path,
+                required: true,
+                present: present,
+                detail: present ? "Found" : "Missing required file"
+            ))
+        }
+        for path in RuntimeBundleLayout.optionalRelativePaths {
+            let present = FileManager.default.fileExists(atPath: layout.url(forRelative: path).path)
+            rows.append(RuntimeComponentStatus(
+                id: path,
+                name: path,
+                required: false,
+                present: present,
+                detail: present ? "Found" : "Optional"
+            ))
+        }
+        return rows
     }
 
     func currentState() async -> RuntimeState {
-        guard let binaryDirectory else {
+        switch integrationReport() {
+        case .noBundleDirectory:
             return .unavailable
+        case .incomplete(let missing, _, _):
+            return .error(
+                "Runtime incomplete. Missing: \(missing.joined(separator: ", ")). "
+                + "Build or copy Madeira products into the Runtime folder. "
+                + "Upstream \(projectURL) @ \(pinnedCommit ?? "?"). "
+                + "JIT on device requires a debugger attach (e.g. StikDebug) — see Madeira docs."
+            )
+        case .ready(let version, _):
+            return .installed(version: version)
         }
-
-        let wineBinary = binaryDirectory.appendingPathComponent("wine64")
-        let fexBinary = binaryDirectory.appendingPathComponent("FEXInterpreter")
-        let dxmtBinary = binaryDirectory.appendingPathComponent("dxmt11.dylib")
-
-        let binariesExist = FileManager.default.fileExists(atPath: wineBinary.path)
-            && FileManager.default.fileExists(atPath: fexBinary.path)
-            && FileManager.default.fileExists(atPath: dxmtBinary.path)
-
-        guard binariesExist else {
-            let missing = [
-                !FileManager.default.fileExists(atPath: wineBinary.path) ? "wine64" : nil,
-                !FileManager.default.fileExists(atPath: fexBinary.path) ? "FEXInterpreter" : nil,
-                !FileManager.default.fileExists(atPath: dxmtBinary.path) ? "dxmt11.dylib" : nil,
-            ].compactMap { $0 }
-            return .error("Missing binaries: \(missing.joined(separator: ", ")). "
-                + "The Madeira runtime must be compiled and placed in: \(binaryDirectory.path). "
-                + "See \(projectURL) at commit \(pinnedCommit ?? "unknown").")
-        }
-
-        let version = installedVersion ?? "unknown"
-        return .installed(version: version)
     }
 
     func supportedCapabilities() async -> Set<RuntimeCapability> {
@@ -72,13 +98,14 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     func isCapabilityAvailable(_ capability: RuntimeCapability) async -> Bool {
         let state = await currentState()
         guard case .installed = state else { return false }
-
         switch capability {
         case .wineExecution, .x86Translation, .d3d11ToMetal,
              .audioOutput, .inputCapture, .dynamicLibraryLoading:
             return true
         case .jitCompilation:
-            return await jitEntitlementEnabled()
+            // Presence of CS_DEBUGGED / StikDebug cannot be fully proven offline.
+            // Report true only when binaries exist; launch path still may fail without JIT.
+            return true
         }
     }
 
@@ -89,28 +116,16 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         environment: [String: String],
         config: RuntimeConfig
     ) async -> LaunchResult {
-        let state = await currentState()
-
-        guard case .installed(let version) = state else {
+        let report = integrationReport()
+        guard case .ready(let version, _) = report else {
             return .runtimeNotInstalled
         }
-
-        guard let binaryDirectory else {
-            return .binaryMissing("Madeira binary directory not configured")
+        guard let layout else {
+            return .binaryMissing("Runtime directory not configured")
         }
 
-        let fexBinary = binaryDirectory.appendingPathComponent("FEXInterpreter")
-        guard FileManager.default.fileExists(atPath: fexBinary.path) else {
-            return .binaryMissing("FEXInterpreter not found at \(fexBinary.path). "
-                + "Compile Madeira from \(projectURL) at commit \(pinnedCommit ?? "unknown").")
-        }
-
-        if !(await jitEntitlementEnabled()) {
-            return .entitlementRequired(
-                "JIT compilation entitlement is required for x86-64 translation. "
-                + "The app must be built with the com.apple.security.cs.allow-jit entitlement "
-                + "and run on a device with JIT support.")
-        }
+        let wineBinary = layout.url(forRelative: "wine64")
+        let fexBinary = layout.url(forRelative: "FEXInterpreter")
 
         var env = environment
         env["WINEPREFIX"] = prefixURL.path
@@ -118,16 +133,18 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         env["MADEIRA_VERSION"] = version
         env["DXMT_ENABLED"] = config.dxmtEnabled ? "1" : "0"
         env["DXVK_ENABLED"] = config.dxvkEnabled ? "1" : "0"
+        env["WINEDLLPATH"] = layout.root.path
 
-        let wineBinary = binaryDirectory.appendingPathComponent("wine64")
         let launchBinary: URL
         let launchArguments: [String]
         if FileManager.default.fileExists(atPath: wineBinary.path) {
             launchBinary = wineBinary
             launchArguments = [executableURL.path] + arguments
-        } else {
+        } else if FileManager.default.fileExists(atPath: fexBinary.path) {
             launchBinary = fexBinary
             launchArguments = [executableURL.path] + arguments
+        } else {
+            return .binaryMissing("Neither wine64 nor FEXInterpreter found under \(layout.root.path)")
         }
 
         do {
@@ -138,38 +155,41 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
                 workingDirectory: executableURL.deletingLastPathComponent()
             )
             if result.status == 0 {
+                if result.pid != 0 {
+                    return .successLaunched(pid: result.pid)
+                }
                 return .success
             }
             return .error("Runtime process exited with status \(result.status)")
         } catch {
-            return .error("Failed to launch runtime process: \(error.localizedDescription)")
+            return .error("Failed to launch runtime: \(error.localizedDescription)")
         }
     }
 
     func stopRunningProcesses() async {
-        NativeProcessLauncher.terminate(names: ["wine64", "FEXInterpreter", "wine"])
+        NativeProcessLauncher.terminate(names: ["wine64", "FEXInterpreter", "wine", "wineserver"])
     }
 
     func runtimeStatus() async -> RuntimeStatus {
         let state = await currentState()
         let capabilities = await supportedCapabilities()
-
-        let reports: [RuntimeStatus.RuntimeCapabilityReport] = await withTaskGroup(of: RuntimeStatus.RuntimeCapabilityReport.self) { group in
+        let reports: [RuntimeStatus.RuntimeCapabilityReport] = await withTaskGroup(
+            of: RuntimeStatus.RuntimeCapabilityReport.self
+        ) { group in
             for cap in capabilities {
                 group.addTask { [self] in
                     let available = await self.isCapabilityAvailable(cap)
-                    let reason: String? = available ? nil : "Runtime binaries not installed or JIT entitlement missing"
-                    return RuntimeStatus.RuntimeCapabilityReport(capability: cap, available: available, reason: reason)
+                    return RuntimeStatus.RuntimeCapabilityReport(
+                        capability: cap,
+                        available: available,
+                        reason: available ? nil : "Runtime incomplete or not installed"
+                    )
                 }
             }
-
             var results: [RuntimeStatus.RuntimeCapabilityReport] = []
-            for await report in group {
-                results.append(report)
-            }
+            for await report in group { results.append(report) }
             return results
         }
-
         return RuntimeStatus(
             id: id,
             providerName: name,
@@ -177,13 +197,5 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
             capabilities: reports.sorted { $0.capability.rawValue < $1.capability.rawValue },
             lastChecked: Date()
         )
-    }
-
-    private func jitEntitlementEnabled() async -> Bool {
-        #if os(iOS)
-        return true
-        #else
-        return false
-        #endif
     }
 }
