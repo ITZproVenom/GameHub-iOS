@@ -19,6 +19,7 @@ enum RuntimeState: Sendable {
 
 enum LaunchResult: Sendable {
     case success
+    case successLaunched(pid: pid_t)
     case unsupported(String)
     case runtimeNotInstalled
     case binaryMissing(String)
