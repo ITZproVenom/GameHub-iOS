@@ -21,6 +21,23 @@ jobs:
           xcodebuild -version
           xcode-select -p
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project from project.yml
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("GameHub.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          if "objectVersion" not in text:
+              raise SystemExit("generated project missing objectVersion")
+          print("generated project bytes", p.stat().st_size)
+          print(text.splitlines()[0])
+          PY
+
       - name: Validate project parses
         run: |
           set -euo pipefail
