@@ -1,0 +1,246 @@
+name: Build Madeira Runtime + IPA
+
+# Packages REAL Madeira runtime artifacts from pinned upstream into GameHub.ipa.
+# Madeira architecture (commit 97e2ce26):
+#   - Windows PE sysroots live under app/Madeira/{aarch64,arm64ec}-windows/*.dll
+#   - FEX translation surface includes arm64ec-windows/xtajit64.dll
+#   - DXMT PE: d3d11.dll, dxgi.dll, winemetal.dll, d3d10core.dll
+#   - Host Wine/FEX/DXMT unix sides link INTO the Madeira process (static .a +
+#     ObjC/C++ bridges) — there is no standalone wine64 binary product.
+# This job vendors every prebuilt binary Madeira publishes in-tree and produces
+# an IPA whose Payload includes Runtime/ with those files.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-madeira-runtime.yml"
+      - "GameHub/Services/Runtime/**"
+      - "project.yml"
+
+permissions:
+  contents: write
+
+env:
+  MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+  MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
+
+jobs:
+  package-runtime:
+    name: Package Madeira runtime assets
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Sparse-checkout Madeira app assets
+        run: |
+          set -euo pipefail
+          rm -rf madeira-src
+          git init madeira-src
+          cd madeira-src
+          git remote add origin "$MADEIRA_REPO"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          app/Madeira/aarch64-windows/
+          app/Madeira/arm64ec-windows/
+          app/Madeira/nls/
+          app/Madeira/legal/
+          app/Madeira/prefix-template.tar.gz
+          app/Madeira/cacert.pem
+          app/Madeira/hello_x86.elf
+          app/Madeira/libgmp.a
+          app/Madeira/libgnutls.a
+          app/Madeira/libhogweed.a
+          app/Madeira/libnettle.a
+          app/libdxmt_unix.a
+          LICENSE
+          THIRD-PARTY-NOTICES.md
+          EOF
+          git fetch --depth 1 origin "$MADEIRA_COMMIT"
+          git checkout "$MADEIRA_COMMIT"
+          echo "Madeira tree:"
+          du -sh app/Madeira/* 2>/dev/null | sort -h | tail -20
+
+      - name: Assemble Runtime bundle
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/runtime-bundle"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+
+          SRC="madeira-src/app/Madeira"
+          test -d "$SRC/aarch64-windows"
+          test -d "$SRC/arm64ec-windows"
+
+          cp -R "$SRC/aarch64-windows" "$ROOT/"
+          cp -R "$SRC/arm64ec-windows" "$ROOT/"
+          [[ -d "$SRC/nls" ]] && cp -R "$SRC/nls" "$ROOT/" || true
+          [[ -d "$SRC/legal" ]] && cp -R "$SRC/legal" "$ROOT/" || true
+
+          for f in prefix-template.tar.gz cacert.pem hello_x86.elf \
+                   libgmp.a libgnutls.a libhogweed.a libnettle.a; do
+            [[ -f "$SRC/$f" ]] && cp "$SRC/$f" "$ROOT/"
+          done
+          [[ -f madeira-src/app/libdxmt_unix.a ]] && cp madeira-src/app/libdxmt_unix.a "$ROOT/"
+
+          # DXMT PE markers (must exist in aarch64 or arm64ec tree)
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("runtime-bundle")
+          need = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+          found = {n: False for n in need}
+          for sub in ("aarch64-windows", "arm64ec-windows"):
+              d = root / sub
+              if not d.is_dir():
+                  continue
+              for n in need:
+                  if (d / n).is_file():
+                      found[n] = True
+          missing = [k for k,v in found.items() if not v]
+          if missing:
+              raise SystemExit(f"Missing DXMT PE DLLs: {missing}")
+          xtajit = list(root.rglob("xtajit64.dll"))
+          if not xtajit:
+              raise SystemExit("Missing xtajit64.dll (FEX/ARM64EC translation surface)")
+          print("DXMT PE OK", found)
+          print("xtajit64", xtajit[0])
+          dlls = list(root.rglob("*.dll"))
+          print("dll count", len(dlls))
+          print("bundle bytes", sum(p.stat().st_size for p in root.rglob("*") if p.is_file()))
+          PY
+
+          # Manifest — honest about what is / is not included
+          {
+            echo "madeira_commit=$MADEIRA_COMMIT"
+            echo "bundled=pe_sysroots,xtajit64,dxmt_pe,crypto_static_libs,prefix_template"
+            echo "not_bundled=wine_host_static,fexcore_host,libdxmt_combined,in_process_bridges"
+            echo "note=Madeira runs Wine/FEX inside one iOS process; standalone wine64 is not a Madeira product."
+          } > "$ROOT/VERSION"
+
+          cp madeira-src/LICENSE "$ROOT/LICENSE-MADEIRA.txt" 2>/dev/null || true
+          cp madeira-src/THIRD-PARTY-NOTICES.md "$ROOT/" 2>/dev/null || true
+
+          du -sh "$ROOT"
+          find "$ROOT" -maxdepth 2 -type f | head -40
+
+      - name: Upload runtime-bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: madeira-runtime-bundle
+          path: runtime-bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  build-ipa-with-runtime:
+    name: GameHub IPA + Runtime
+    needs: package-runtime
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download runtime bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: madeira-runtime-bundle
+          path: runtime-bundle
+
+      - name: Stage Runtime into app resources
+        run: |
+          set -euo pipefail
+          DEST="GameHub/Resources/Runtime"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          rsync -a runtime-bundle/ "$DEST/"
+          test -f "$DEST/VERSION"
+          test -d "$DEST/aarch64-windows"
+          test -d "$DEST/arm64ec-windows"
+          test -f "$DEST/arm64ec-windows/xtajit64.dll" || test -f "$DEST/aarch64-windows/xtajit64.dll"
+          du -sh "$DEST"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project & archive
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("GameHub.xcodeproj/project.pbxproj")
+          p.write_text(re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text()))
+          PY
+          xcodebuild archive \
+            -project GameHub.xcodeproj \
+            -scheme GameHub \
+            -configuration Release \
+            -archivePath "$PWD/build/GameHub.xcarchive" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package IPA and verify Runtime inside
+        run: |
+          set -euo pipefail
+          APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
+          test -d "$APP"
+          # Resources may land at app root or in a Resources subfolder
+          if [[ ! -d "$APP/Runtime" && -d "$APP/GameHub/Resources/Runtime" ]]; then
+            echo "Runtime path nested — checking"
+          fi
+          mkdir -p build/Payload
+          rm -rf build/Payload/GameHub.app
+          cp -R "$APP" build/Payload/
+          (cd build && zip -qr GameHub-with-runtime.ipa Payload)
+          python3 - <<'PY'
+          import zipfile, sys
+          z = zipfile.ZipFile("build/GameHub-with-runtime.ipa")
+          names = z.namelist()
+          runtime = [n for n in names if "/Runtime/" in n or n.endswith("/Runtime/VERSION")]
+          dlls = [n for n in names if n.endswith(".dll")]
+          print("runtime entries", len(runtime))
+          print("dll entries", len(dlls))
+          if len(dlls) < 50:
+              # print sample of archive paths for debug
+              for n in names[:40]:
+                  print(" ", n)
+              sys.exit("IPA missing Madeira PE DLLs in Runtime — resource copy failed")
+          xtajit = [n for n in names if n.endswith("xtajit64.dll")]
+          if not xtajit:
+              sys.exit("IPA missing xtajit64.dll")
+          print("OK xtajit", xtajit[0])
+          print("IPA size", z.getinfo(names[0]).file_size)
+          PY
+          ls -lh build/GameHub-with-runtime.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameHub-ipa-with-madeira-runtime
+          path: build/GameHub-with-runtime.ipa
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: runtime-${{ github.run_number }}-${{ github.sha }}
+          name: GameHub + Madeira runtime assets #${{ github.run_number }}
+          prerelease: true
+          body: |
+            IPA with **real Madeira PE/runtime assets** from `${{ env.MADEIRA_COMMIT }}`.
+
+            Included under `Runtime/`:
+            - `aarch64-windows/` and `arm64ec-windows/` PE DLLs (incl. DXMT + xtajit64)
+            - crypto static libs, prefix-template, hello_x86.elf
+
+            **Not yet in-process:** Wine host / FEXCore unix bridges (Madeira links these into its own app binary; no standalone `wine64`). Next integration step is linking Madeira’s Wine/FEX bridges + static libs into GameHub or embedding Madeira’s process model.
+
+            Install unsigned IPA via AltStore / Sideloadly / TrollStore. JIT still requires debugger attach (StikDebug) per Madeira docs.
+          files: build/GameHub-with-runtime.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,15 +1,14 @@
 import Foundation
 
-/// Host-side integration with the Madeira runtime stack
-/// (Wine ARM64EC + FEX + DXMT). Does **not** fabricate launches.
+/// Integrates **Madeira** (Wine + FEX + DXMT) artifacts.
 ///
-/// Binaries must be placed under a discovered Runtime root (see
-/// `RuntimeBundleLayout`). Upstream: https://github.com/willfaust/Madeira
-/// pinned commit via `GameHubConstants.madeiraPinnedCommit`.
+/// Upstream products discrete files for PE sysroots / xtajit / DXMT PE and
+/// links host Wine/FEX into the iOS process. This provider never fakes a
+/// successful Windows launch without a real host path.
 final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let id = "madeira"
     let name = "Madeira"
-    let description = "Wine ARM64EC + FEX-Emu x86-64 translation + DXMT D3D11→Metal"
+    let description = "Wine (in-process) + FEX/xtajit64 + DXMT PE — Madeira layout"
     let projectURL = GameHubConstants.madeiraProjectURL
     let pinnedCommit: String? = GameHubConstants.madeiraPinnedCommit
 
@@ -20,72 +19,47 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     private func layout() -> RuntimeBundleLayout? {
-        if let forcedRoot {
-            return RuntimeBundleLayout(root: forcedRoot)
-        }
+        if let forcedRoot { return RuntimeBundleLayout(root: forcedRoot) }
         guard let root = RuntimeBundleLayout.firstExistingRoot() else { return nil }
         return RuntimeBundleLayout(root: root)
     }
 
     func integrationReport() -> RuntimeIntegrationReport {
         guard let layout else { return .noBundleDirectory }
-        let missing = layout.missingRequired()
-        let optional = layout.presentOptional()
-        let version = layout.readVersion()
-        if missing.isEmpty {
-            return .ready(version: version ?? "unknown", presentOptional: optional)
+        var missing = layout.missingMarkers()
+        missing.append(contentsOf: layout.missingPE())
+        if !missing.isEmpty {
+            return .incomplete(missing: missing)
         }
-        return .incomplete(missing: missing, presentOptional: optional, version: version)
-    }
-
-    func componentStatuses() -> [RuntimeComponentStatus] {
-        guard let layout else {
-            return RuntimeBundleLayout.requiredRelativePaths.map {
-                RuntimeComponentStatus(
-                    id: $0,
-                    name: $0,
-                    required: true,
-                    present: false,
-                    detail: "Runtime directory not found. Place binaries under Documents/Runtime or App Support/GameHubData/Runtime."
-                )
-            }
-        }
-        var rows: [RuntimeComponentStatus] = []
-        for path in RuntimeBundleLayout.requiredRelativePaths {
-            let present = FileManager.default.fileExists(atPath: layout.url(forRelative: path).path)
-            rows.append(RuntimeComponentStatus(
-                id: path,
-                name: path,
-                required: true,
-                present: present,
-                detail: present ? "Found" : "Missing required file"
-            ))
-        }
-        for path in RuntimeBundleLayout.optionalRelativePaths {
-            let present = FileManager.default.fileExists(atPath: layout.url(forRelative: path).path)
-            rows.append(RuntimeComponentStatus(
-                id: path,
-                name: path,
-                required: false,
-                present: present,
-                detail: present ? "Found" : "Optional"
-            ))
-        }
-        return rows
+        let version = layout.readVersion() ?? "madeira-sysroot"
+        // Host Wine is not a separate wine64 in Madeira; until bridges are
+        // linked into GameHub, missingHost stays true.
+        let missingHost = !layout.hasInProcessHostHint && !FileManager.default.fileExists(
+            atPath: layout.url(forRelative: "wine64").path
+        )
+        // libdxmt_unix.a alone is not a full host — still mark host missing
+        // unless wine64 exists (experimental external spawn) or a future flag.
+        let hostReady = FileManager.default.fileExists(
+            atPath: layout.url(forRelative: "wine64").path
+        )
+        return .sysrootReady(version: version, missingHost: !hostReady)
     }
 
     func currentState() async -> RuntimeState {
         switch integrationReport() {
         case .noBundleDirectory:
             return .unavailable
-        case .incomplete(let missing, _, _):
-            return .error(
-                "Runtime incomplete. Missing: \(missing.joined(separator: ", ")). "
-                + "Build or copy Madeira products into the Runtime folder. "
-                + "Upstream \(projectURL) @ \(pinnedCommit ?? "?"). "
-                + "JIT on device requires a debugger attach (e.g. StikDebug) — see Madeira docs."
-            )
-        case .ready(let version, _):
+        case .incomplete(let missing):
+            return .error("Runtime incomplete: \(missing.joined(separator: ", "))")
+        case .sysrootReady(let version, let missingHost):
+            if missingHost {
+                return .error(
+                    "Madeira PE sysroot \(version) is present (DXMT/xtajit/prefix), "
+                    + "but in-process Wine/FEX host is not linked into this build. "
+                    + "Madeira does not ship standalone wine64 — host is built into "
+                    + "Madeira.app via static libs + bridges. See \(projectURL) @ \(pinnedCommit ?? "")."
+                )
+            }
             return .installed(version: version)
         }
     }
@@ -98,15 +72,7 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     func isCapabilityAvailable(_ capability: RuntimeCapability) async -> Bool {
         let state = await currentState()
         guard case .installed = state else { return false }
-        switch capability {
-        case .wineExecution, .x86Translation, .d3d11ToMetal,
-             .audioOutput, .inputCapture, .dynamicLibraryLoading:
-            return true
-        case .jitCompilation:
-            // Presence of CS_DEBUGGED / StikDebug cannot be fully proven offline.
-            // Report true only when binaries exist; launch path still may fail without JIT.
-            return true
-        }
+        return true
     }
 
     func launch(
@@ -117,78 +83,54 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         config: RuntimeConfig
     ) async -> LaunchResult {
         let report = integrationReport()
-        guard case .ready(let version, _) = report else {
+        switch report {
+        case .noBundleDirectory, .incomplete:
             return .runtimeNotInstalled
-        }
-        guard let layout else {
-            return .binaryMissing("Runtime directory not configured")
+        case .sysrootReady(_, true):
+            return .binaryMissing(
+                "PE sysroot is installed but Wine host is not available in this app binary. "
+                + "Integrate Madeira WineProcessBridge / static Wine (no standalone wine64)."
+            )
+        case .sysrootReady(let version, false):
+            break
         }
 
-        let wineBinary = layout.url(forRelative: "wine64")
-        let fexBinary = layout.url(forRelative: "FEXInterpreter")
+        guard let layout,
+              FileManager.default.fileExists(atPath: layout.url(forRelative: "wine64").path)
+        else {
+            return .binaryMissing("wine64 not present")
+        }
 
         var env = environment
         env["WINEPREFIX"] = prefixURL.path
-        env["WINEARCH"] = config.windowsVersion == .win7 ? "win32" : "win64"
-        env["MADEIRA_VERSION"] = version
-        env["DXMT_ENABLED"] = config.dxmtEnabled ? "1" : "0"
-        env["DXVK_ENABLED"] = config.dxvkEnabled ? "1" : "0"
-        env["WINEDLLPATH"] = layout.root.path
-
-        let launchBinary: URL
-        let launchArguments: [String]
-        if FileManager.default.fileExists(atPath: wineBinary.path) {
-            launchBinary = wineBinary
-            launchArguments = [executableURL.path] + arguments
-        } else if FileManager.default.fileExists(atPath: fexBinary.path) {
-            launchBinary = fexBinary
-            launchArguments = [executableURL.path] + arguments
-        } else {
-            return .binaryMissing("Neither wine64 nor FEXInterpreter found under \(layout.root.path)")
-        }
+        env["WINEARCH"] = "win64"
+        env["MADEIRA_VERSION"] = layout.readVersion() ?? "unknown"
+        env["WINEDLLPATH"] = layout.url(forRelative: "arm64ec-windows").path
 
         do {
             let result = try NativeProcessLauncher.run(
-                executable: launchBinary,
-                arguments: launchArguments,
+                executable: layout.url(forRelative: "wine64"),
+                arguments: [executableURL.path] + arguments,
                 environment: env,
                 workingDirectory: executableURL.deletingLastPathComponent()
             )
-            if result.status == 0 {
-                if result.pid != 0 {
-                    return .successLaunched(pid: result.pid)
-                }
-                return .success
-            }
-            return .error("Runtime process exited with status \(result.status)")
+            return result.status == 0 ? .successLaunched(pid: result.pid) : .error("exit \(result.status)")
         } catch {
-            return .error("Failed to launch runtime: \(error.localizedDescription)")
+            return .error(error.localizedDescription)
         }
     }
 
     func stopRunningProcesses() async {
-        NativeProcessLauncher.terminate(names: ["wine64", "FEXInterpreter", "wine", "wineserver"])
+        NativeProcessLauncher.terminate(names: ["wine64", "wine", "wineserver"])
     }
 
     func runtimeStatus() async -> RuntimeStatus {
         let state = await currentState()
         let capabilities = await supportedCapabilities()
-        let reports: [RuntimeStatus.RuntimeCapabilityReport] = await withTaskGroup(
-            of: RuntimeStatus.RuntimeCapabilityReport.self
-        ) { group in
-            for cap in capabilities {
-                group.addTask { [self] in
-                    let available = await self.isCapabilityAvailable(cap)
-                    return RuntimeStatus.RuntimeCapabilityReport(
-                        capability: cap,
-                        available: available,
-                        reason: available ? nil : "Runtime incomplete or not installed"
-                    )
-                }
-            }
-            var results: [RuntimeStatus.RuntimeCapabilityReport] = []
-            for await report in group { results.append(report) }
-            return results
+        var reports: [RuntimeStatus.RuntimeCapabilityReport] = []
+        for cap in capabilities {
+            let available = await isCapabilityAvailable(cap)
+            reports.append(.init(capability: cap, available: available, reason: available ? nil : "Host or sysroot incomplete"))
         }
         return RuntimeStatus(
             id: id,
