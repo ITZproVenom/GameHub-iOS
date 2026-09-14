@@ -6,8 +6,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-madeira-host.yml"
-      - "Scripts/madeira-host-build.md"
-      - "Scripts/ci-madeira-host.sh"
 
 permissions:
   contents: read
@@ -23,24 +21,18 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Show toolchain
-        run: |
-          set -euo pipefail
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          clang --version | head -2
-
       - name: Install build deps
         run: |
           set -euo pipefail
-          brew install cmake ninja flex bison pkg-config wget || true
+          brew install cmake ninja flex bison pkg-config wget python3 || true
+          pip3 install --user packaging || python3 -m pip install --user packaging || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
-          which bison; bison --version | head -1
-          which flex; flex --version | head -1
+          echo "BISON=$(command -v bison)"; bison --version | head -1
+          echo "FLEX=$(command -v flex)"; flex --version | head -1
 
-      - name: Clone Madeira + submodules
+      - name: Clone Madeira + wine + FEX
         run: |
           set -euo pipefail
           rm -rf madeira
@@ -51,15 +43,18 @@ jobs:
           git submodule update --init --depth 1 wine FEX
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
-      - name: Stage A — Wine host configure (config.h)
+      - name: Stage A — Wine host configure
         id: wine_cfg
         continue-on-error: true
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
-          which bison; bison --version | head -1
+          export BISON="/opt/homebrew/opt/bison/bin/bison"
+          export FLEX="/opt/homebrew/opt/flex/bin/flex"
+          "$BISON" --version | head -1
           cd madeira/wine
           mkdir -p build-macos && cd build-macos
+          set +e
           ../configure \
             --enable-win64 \
             --without-x \
@@ -68,8 +63,19 @@ jobs:
             --disable-tests \
             --disable-win16 \
             CFLAGS="-O2" \
-            2>&1 | tee "$GITHUB_WORKSPACE/wine-configure.log"
-          test -f include/config.h
+            > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
+          rc=$?
+          set -e
+          tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          if [[ $rc -ne 0 ]]; then
+            echo "configure exit $rc"
+            exit $rc
+          fi
+          if [[ ! -f include/config.h ]]; then
+            echo "config.h missing after successful configure"
+            find . -name config.h | head
+            exit 1
+          fi
           ls -la include/config.h
 
       - name: Stage B — libntdll_unix.a
@@ -79,13 +85,12 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
-          cd madeira
-          mkdir -p app/Madeira
+          cd madeira && mkdir -p app/Madeira
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
-          test -f app/Madeira/libntdll_unix.a
+          test -s app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
-          file app/Madeira/libntdll_unix.a || true
+          file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
 
       - name: Stage C — libwineserver.a
@@ -95,13 +100,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
-          cd madeira
-          mkdir -p app/Madeira
+          cd madeira && mkdir -p app/Madeira
           bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
-          test -f app/Madeira/libwineserver.a
+          test -s app/Madeira/libwineserver.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
-          ls -lh app/Madeira/libwineserver.a
 
       - name: Stage D — libwin32u_unix.a
         id: win32u
@@ -109,10 +112,9 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           bash build/win32u-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/win32u-unix.log"
-          test -f app/Madeira/libwin32u_unix.a
+          test -s app/Madeira/libwin32u_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
 
@@ -121,7 +123,8 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          test -d madeira/FEX
+          pip3 install --user packaging || true
+          export PATH="$HOME/Library/Python/3.14/bin:$PATH"
           cd madeira/FEX
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -133,43 +136,35 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_OSX_SYSROOT="$SDK" \
-            -DBUILD_TESTS=OFF \
+            -DBUILD_TESTING=OFF \
             -DBUILD_THUNKS=OFF \
+            -DBUILD_FEXCONFIG=OFF \
+            -DBUILD_FEX_LINUX_TESTS=OFF \
             -DENABLE_LTO=OFF \
-            -DENABLE_JEMALLOC=OFF \
+            -DENABLE_CCACHE=OFF \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
+            -DENABLE_FEX_ALLOCATOR=OFF \
+            -DENABLE_OFFLINE_TELEMETRY=OFF \
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log"
           ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log"
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
-          find . -name '*.a' -print0 | while IFS= read -r -d '' f; do
-            case "$f" in
-              *libFEXCore*|*libfmt*|*libxxhash*|*libJemalloc*|*libsoftfloat*|*libcephes*)
-                cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
-                ;;
-            esac
-          done
-          ls -lh "$GITHUB_WORKSPACE/host-libs/fex" || true
+          find . -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \
+            | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
+          ls -lhR "$GITHUB_WORKSPACE/host-libs/fex"
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
 
-      - name: Summarize + verify non-empty archives
+      - name: Manifest
         if: always()
         run: |
-          set -euo pipefail
           mkdir -p host-libs
           {
-            echo "madeira_commit=$MADEIRA_COMMIT"
-            echo "wine_configure=${{ steps.wine_cfg.outcome }}"
-            echo "ntdll=${{ steps.ntdll.outcome }}"
-            echo "wineserver=${{ steps.wineserver.outcome }}"
-            echo "win32u=${{ steps.win32u.outcome }}"
-            echo "fex=${{ steps.fex.outcome }}"
-            echo "---"
+            echo "wine=${{ steps.wine_cfg.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
             find host-libs -name '*.a' -exec ls -lh {} \;
           } | tee host-libs/MANIFEST.txt
 
-      - name: Upload host-libs artifact
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -183,15 +178,10 @@ jobs:
             fex-cmake.log
             fex-ninja.log
           if-no-files-found: warn
-          retention-days: 14
 
-      - name: Require at least one real .a
+      - name: Require real .a
         if: always()
         run: |
-          set -euo pipefail
           count=$(find host-libs -name '*.a' -size +1k 2>/dev/null | wc -l | tr -d ' ')
-          echo "Non-trivial .a count: $count"
-          if [[ "$count" -eq 0 ]]; then
-            echo "::error::No real host .a libraries produced"
-            exit 1
-          fi
+          echo "count=$count"
+          [[ "$count" -gt 0 ]]
