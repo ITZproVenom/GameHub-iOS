@@ -5,7 +5,6 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
   developmentLanguage: en
-  # Keep format readable by Xcode 15 / 16 on CI
   xcodeVersion: "15.0"
 settings:
   base:
@@ -21,6 +20,12 @@ targets:
       - path: GameHub
         excludes:
           - "**/*.md"
+          # Runtime is copied as a folder resource (preserves PE trees)
+          - "Resources/Runtime/**"
+    resources:
+      - path: GameHub/Resources/Runtime
+        type: folder
+        optional: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gamehub.ios
