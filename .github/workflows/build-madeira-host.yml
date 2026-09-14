@@ -25,7 +25,6 @@ jobs:
       - name: Install build deps + llvm-mingw
         run: |
           set -euo pipefail
-          # Skip brew llvm (1.9GB) — llvm-mingw provides objcopy/dlltool
           brew install cmake ninja flex bison pkg-config wget python3 || true
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
@@ -42,9 +41,7 @@ jobs:
           echo "$HOME/toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/toolchains/llvm-mingw/bin:$PATH"
           aarch64-w64-mingw32-clang --version | head -1 || true
-          which llvm-objcopy || true
           bison --version | head -1
-          flex --version | head -1
 
       - name: Clone Madeira + wine + FEX
         run: |
@@ -56,7 +53,6 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          # Submodules: depth 1 only, sequential to avoid stalls
           git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow wine
           git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow FEX
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
@@ -89,7 +85,6 @@ jobs:
             exit $rc
           fi
           test -f include/config.h
-          ls -la include/config.h
 
       - name: Stage B — libntdll_unix.a (core objs; gnutls optional)
         id: ntdll
@@ -120,8 +115,6 @@ jobs:
           file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
           ar t app/Madeira/libntdll_unix.a | head -40
-          nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -30 || \
-            llvm-nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -30 || true
 
       - name: Stage C — libwineserver.a
         id: wineserver
@@ -131,7 +124,6 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira && mkdir -p app/Madeira build/wineserver/obj
-          # macOS ar rejects empty archives — seed with a tiny dummy object then let build.sh overwrite
           if [[ ! -s app/Madeira/libwineserver.a ]]; then
             echo 'int madeira_wineserver_seed=0;' | clang -c -x c -o /tmp/ws_seed.o -
             ar rcs app/Madeira/libwineserver.a /tmp/ws_seed.o
@@ -159,7 +151,7 @@ jobs:
           else
             echo "wineserver archive empty or too small"
             ls -la "$OBJ" || true
-            cat "$GITHUB_WORKSPACE/wineserver.log" | tail -50 || true
+            tail -50 "$GITHUB_WORKSPACE/wineserver.log" || true
             exit 1
           fi
 
@@ -209,31 +201,17 @@ jobs:
             'CPU part        : 0x000' \
             'CPU revision    : 0' > "$CPUINFO_STUB"
 
-          # Also create a fake /proc hierarchy that the script may open via argv
           mkdir -p "$RUNNER_TEMP/fakeproc"
           cp "$CPUINFO_STUB" "$RUNNER_TEMP/fakeproc/cpuinfo"
 
           cd madeira/FEX
-          # Patch every reference to /proc/cpuinfo in Scripts and CMake files
-          find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0 | while IFS= read -r -d '' f; do
+          # Replace every /proc/cpuinfo occurrence in source so both string literals and CMake argv become the stub
+          find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' \) -print0 | while IFS= read -r -d '' f; do
             if grep -q '/proc/cpuinfo' "$f" 2>/dev/null; then
               sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f"
               echo "patched $f"
             fi
           done
-
-          # Extra safety: make aarch64_fit_native.py always open the stub even if argv is wrong
-          if [[ -f Scripts/aarch64_fit_native.py ]]; then
-            python3 -c "
-import pathlib
-p = pathlib.Path('Scripts/aarch64_fit_native.py')
-t = p.read_text()
-stub = pathlib.Path('$RUNNER_TEMP') / 'fakeproc' / 'cpuinfo'
-t = t.replace('with open(sys.argv[1]) as cpuinfo_file:', f'with open(\"{stub}\") as cpuinfo_file:')
-p.write_text(t)
-print('hard-patched aarch64_fit_native.py to', stub)
-"
-          fi
 
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
