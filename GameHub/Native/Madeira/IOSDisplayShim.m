@@ -64,7 +64,7 @@ static macdrv_metal_layer my_view_get_metal_layer(macdrv_metal_view v) {
     pthread_mutex_lock(&g_lock);
     CAMetalLayer *layer = g_layer;
     pthread_mutex_unlock(&g_lock);
-    return (macdrv_metal_layer)layer;
+    return (__bridge macdrv_metal_layer)layer;
 }
 static void my_view_release_metal_view(macdrv_metal_view v) { (void)v; }
 static void my_on_main_thread(dispatch_block_t b) {
