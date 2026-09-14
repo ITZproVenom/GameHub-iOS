@@ -53,8 +53,15 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow wine
-          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow FEX
+          # Sequential, single-job, with timeout to avoid hangs
+          timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 wine || {
+            echo "wine submodule timed out or failed; retry once"
+            timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 wine
+          }
+          timeout 180 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 FEX || {
+            echo "FEX submodule timed out or failed; retry once"
+            timeout 180 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 FEX
+          }
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
       - name: Stage A — Wine host configure
