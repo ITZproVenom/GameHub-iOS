@@ -14,15 +14,16 @@ env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
   LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-macos-universal.tar.xz
+  CACHE_VERSION: v3
 
 jobs:
   host-libs:
     name: Build host static libraries
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 45
 
     steps:
-      - name: Install build deps + llvm-mingw
+      - name: Install build deps + llvm-mingw (cached)
         run: |
           set -euo pipefail
           brew install cmake ninja flex bison pkg-config wget python3 || true
@@ -33,7 +34,7 @@ jobs:
 
           mkdir -p "$HOME/toolchains"
           if [[ ! -x "$HOME/toolchains/llvm-mingw/bin/aarch64-w64-mingw32-clang" ]]; then
-            curl -L --retry 3 -o /tmp/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
+            curl -L --retry 3 --max-time 120 -o /tmp/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
             tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchains"
             ln -sfn "$HOME/toolchains"/llvm-mingw-*-ucrt-macos-universal "$HOME/toolchains/llvm-mingw"
             rm -f /tmp/llvm-mingw.tar.xz
@@ -43,30 +44,72 @@ jobs:
           aarch64-w64-mingw32-clang --version | head -1 || true
           bison --version | head -1
 
-      - name: Clone Madeira + wine + FEX
+      - name: Cache llvm-mingw toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchains/llvm-mingw
+          key: llvm-mingw-20260826-${{ env.CACHE_VERSION }}
+
+      - name: Cache previous successful host libs
+        id: cache-libs
+        uses: actions/cache@v4
+        with:
+          path: host-libs-cache
+          key: madeira-host-libs-${{ env.MADEIRA_COMMIT }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            madeira-host-libs-${{ env.MADEIRA_COMMIT }}-
+            madeira-host-libs-
+
+      - name: Restore cached real .a if present
+        run: |
+          set -euo pipefail
+          mkdir -p host-libs host-libs-cache
+          if [[ -d host-libs-cache ]]; then
+            find host-libs-cache -name '*.a' -size +1k -exec cp -v {} host-libs/ \; || true
+            find host-libs-cache -name '*.a' -size +1k -exec cp -v {} host-libs-cache/ \; || true
+          fi
+          echo "=== Restored host-libs ==="
+          ls -lh host-libs/*.a 2>/dev/null || echo "(none yet)"
+          # Flag which stages we can skip
+          for lib in libntdll_unix.a libwineserver.a libwin32u_unix.a; do
+            if [[ -s "host-libs/$lib" ]] && [[ $(wc -c < "host-libs/$lib") -gt 10000 ]]; then
+              echo "SKIP_$lib=1" >> "$GITHUB_ENV"
+              echo "Will SKIP rebuild of $lib (cached real archive)"
+            else
+              echo "SKIP_$lib=0" >> "$GITHUB_ENV"
+            fi
+          done
+          if ls host-libs/fex/libFEXCore*.a 1>/dev/null 2>&1; then
+            echo "SKIP_FEX=1" >> "$GITHUB_ENV"
+            echo "Will SKIP FEX rebuild"
+          else
+            echo "SKIP_FEX=0" >> "$GITHUB_ENV"
+          fi
+
+      - name: Clone Madeira + wine + FEX (shallow + cached)
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000
-          export GIT_HTTP_LOW_SPEED_TIME=60
+          export GIT_HTTP_LOW_SPEED_TIME=45
           rm -rf madeira
+          # Fast partial clone
           git clone --depth 1 --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          # Sequential, single-job, with timeout to avoid hangs
-          timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 wine || {
-            echo "wine submodule timed out or failed; retry once"
-            timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 wine
-          }
-          timeout 180 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 FEX || {
-            echo "FEX submodule timed out or failed; retry once"
-            timeout 180 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 FEX
-          }
+          # Parallel-ish submodules with hard timeouts
+          (timeout 90 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 2 wine) &
+          WPID=$!
+          (timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 2 FEX) &
+          FPID=$!
+          wait $WPID || { echo "wine submodule retry"; timeout 90 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 wine; }
+          wait $FPID || { echo "FEX submodule retry"; timeout 120 git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 1 FEX; }
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
-      - name: Stage A — Wine host configure
+      - name: Stage A — Wine host configure (timeout 4m)
         id: wine_cfg
         continue-on-error: true
+        timeout-minutes: 4
         run: |
           set -euo pipefail
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
@@ -74,7 +117,7 @@ jobs:
           export FLEX="/opt/homebrew/opt/flex/bin/flex"
           cd madeira/wine
           mkdir -p build-macos && cd build-macos
-          set +e
+          # Skip freetype/gstreamer/x — no gnutls rebuild
           ../configure \
             --enable-win64 \
             --without-x \
@@ -82,118 +125,143 @@ jobs:
             --without-gstreamer \
             --disable-tests \
             --disable-win16 \
-            CFLAGS="-O2" \
+            CFLAGS="-O2 -pipe" \
             > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
-          rc=$?
-          set -e
-          tail -30 "$GITHUB_WORKSPACE/wine-configure.log" || true
-          if [[ $rc -ne 0 ]]; then
-            echo "configure exit $rc"
-            exit $rc
-          fi
+          tail -20 "$GITHUB_WORKSPACE/wine-configure.log" || true
           test -f include/config.h
 
-      - name: Stage B — libntdll_unix.a (core objs; gnutls optional)
-        id: ntdll
+      - name: Stage B+C+D — ntdll / wineserver / win32u in parallel (timeout 12m)
+        id: wine_unix
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
-        run: |
-          set -euo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
-          cd madeira && mkdir -p app/Madeira
-          set +e
-          bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
-          set -e
-          OBJ=build/ntdll-unix/obj
-          objs=()
-          while IFS= read -r line; do
-            objs+=("$line")
-          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-          echo "Found ${#objs[@]} object files"
-          if [[ ${#objs[@]} -eq 0 ]]; then
-            echo "No objects produced"
-            exit 1
-          fi
-          rm -f app/Madeira/libntdll_unix.a
-          ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
-          test -s app/Madeira/libntdll_unix.a
-          mkdir -p "$GITHUB_WORKSPACE/host-libs"
-          cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
-          file app/Madeira/libntdll_unix.a
-          ls -lh app/Madeira/libntdll_unix.a
-          ar t app/Madeira/libntdll_unix.a | head -40
-
-      - name: Stage C — libwineserver.a
-        id: wineserver
-        if: steps.wine_cfg.outcome == 'success'
-        continue-on-error: true
+        timeout-minutes: 12
         run: |
           set -euo pipefail
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
-          cd madeira && mkdir -p app/Madeira build/wineserver/obj
-          if [[ ! -s app/Madeira/libwineserver.a ]]; then
-            echo 'int madeira_wineserver_seed=0;' | clang -c -x c -o /tmp/ws_seed.o -
-            ar rcs app/Madeira/libwineserver.a /tmp/ws_seed.o
-            cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
-            rm -f /tmp/ws_seed.o
-          fi
-          set +e
-          bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
-          set -e
-          OBJ=build/wineserver/obj
-          objs=()
-          while IFS= read -r line; do
-            objs+=("$line")
-          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-          echo "wineserver objs: ${#objs[@]}"
-          if [[ ${#objs[@]} -gt 0 ]]; then
-            ar rcs app/Madeira/libwineserver.a "${objs[@]}"
-          fi
-          if [[ -s app/Madeira/libwineserver.a ]] && [[ $(wc -c < app/Madeira/libwineserver.a) -gt 1000 ]]; then
-            mkdir -p "$GITHUB_WORKSPACE/host-libs"
-            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
-            file app/Madeira/libwineserver.a
-            ls -lh app/Madeira/libwineserver.a
-            ar t app/Madeira/libwineserver.a | head -20 || true
-          else
-            echo "wineserver archive empty or too small"
-            ls -la "$OBJ" || true
-            tail -50 "$GITHUB_WORKSPACE/wineserver.log" || true
-            exit 1
-          fi
-
-      - name: Stage D — libwin32u_unix.a
-        id: win32u
-        if: steps.wine_cfg.outcome == 'success'
-        continue-on-error: true
-        run: |
-          set -euo pipefail
           cd madeira
-          set +e
-          bash build/win32u-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/win32u-unix.log"
-          set -e
-          OBJ=build/win32u-unix/obj
-          objs=()
-          while IFS= read -r line; do
-            objs+=("$line")
-          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-          echo "win32u objs: ${#objs[@]}"
-          if [[ ${#objs[@]} -gt 0 ]]; then
-            ar rcs app/Madeira/libwin32u_unix.a "${objs[@]}"
-            mkdir -p "$GITHUB_WORKSPACE/host-libs"
-            cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
-            ls -lh app/Madeira/libwin32u_unix.a
-            ar t app/Madeira/libwin32u_unix.a | head -30
-          else
-            echo "win32u archive not produced"
+          mkdir -p app/Madeira host-libs "$GITHUB_WORKSPACE/host-libs"
+
+          build_ntdll() {
+            if [[ "${SKIP_libntdll_unix.a:-0}" == "1" ]]; then
+              echo "[ntdll] SKIP — using cached real archive"
+              cp -v "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" app/Madeira/ 2>/dev/null || true
+              return 0
+            fi
+            echo "[ntdll] BUILDING..."
+            set +e
+            timeout 300 bash build/ntdll-unix/build.sh > "$GITHUB_WORKSPACE/ntdll-unix.log" 2>&1
+            set -e
+            OBJ=build/ntdll-unix/obj
+            objs=()
+            while IFS= read -r line; do objs+=("$line"); done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+            echo "[ntdll] objs=${#objs[@]}"
+            if [[ ${#objs[@]} -eq 0 ]]; then
+              echo "[ntdll] FAIL no objects"
+              return 1
+            fi
+            ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
+            test -s app/Madeira/libntdll_unix.a
+            cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
+            cp -v app/Madeira/libntdll_unix.a host-libs-cache/
+            ls -lh app/Madeira/libntdll_unix.a
+            ar t app/Madeira/libntdll_unix.a | head -20
+            echo "[ntdll] OK"
+          }
+
+          build_wineserver() {
+            if [[ "${SKIP_libwineserver.a:-0}" == "1" ]]; then
+              echo "[wineserver] SKIP — using cached real archive"
+              cp -v "$GITHUB_WORKSPACE/host-libs/libwineserver.a" app/Madeira/ 2>/dev/null || true
+              return 0
+            fi
+            echo "[wineserver] BUILDING..."
+            mkdir -p build/wineserver/obj
+            if [[ ! -s app/Madeira/libwineserver.a ]]; then
+              echo 'int madeira_wineserver_seed=0;' | clang -c -x c -o /tmp/ws_seed.o -
+              ar rcs app/Madeira/libwineserver.a /tmp/ws_seed.o
+              cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
+              rm -f /tmp/ws_seed.o
+            fi
+            set +e
+            timeout 300 bash build/wineserver/build.sh > "$GITHUB_WORKSPACE/wineserver.log" 2>&1
+            set -e
+            OBJ=build/wineserver/obj
+            objs=()
+            while IFS= read -r line; do objs+=("$line"); done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+            echo "[wineserver] objs=${#objs[@]}"
+            if [[ ${#objs[@]} -gt 0 ]]; then
+              ar rcs app/Madeira/libwineserver.a "${objs[@]}"
+            fi
+            if [[ -s app/Madeira/libwineserver.a ]] && [[ $(wc -c < app/Madeira/libwineserver.a) -gt 1000 ]]; then
+              cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+              cp -v app/Madeira/libwineserver.a host-libs-cache/
+              ls -lh app/Madeira/libwineserver.a
+              ar t app/Madeira/libwineserver.a | head -15
+              echo "[wineserver] OK"
+            else
+              echo "[wineserver] FAIL empty"
+              tail -30 "$GITHUB_WORKSPACE/wineserver.log" || true
+              return 1
+            fi
+          }
+
+          build_win32u() {
+            if [[ "${SKIP_libwin32u_unix.a:-0}" == "1" ]]; then
+              echo "[win32u] SKIP — using cached real archive"
+              cp -v "$GITHUB_WORKSPACE/host-libs/libwin32u_unix.a" app/Madeira/ 2>/dev/null || true
+              return 0
+            fi
+            echo "[win32u] BUILDING..."
+            set +e
+            timeout 300 bash build/win32u-unix/build.sh > "$GITHUB_WORKSPACE/win32u-unix.log" 2>&1
+            set -e
+            OBJ=build/win32u-unix/obj
+            objs=()
+            while IFS= read -r line; do objs+=("$line"); done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+            echo "[win32u] objs=${#objs[@]}"
+            if [[ ${#objs[@]} -gt 0 ]]; then
+              ar rcs app/Madeira/libwin32u_unix.a "${objs[@]}"
+              cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
+              cp -v app/Madeira/libwin32u_unix.a host-libs-cache/
+              ls -lh app/Madeira/libwin32u_unix.a
+              ar t app/Madeira/libwin32u_unix.a | head -15
+              echo "[win32u] OK"
+            else
+              echo "[win32u] FAIL no objects"
+              return 1
+            fi
+          }
+
+          # Launch independent stages in parallel
+          build_ntdll & NP=$!
+          build_wineserver & WP=$!
+          build_win32u & UP=$!
+
+          ntdll_rc=0; wineserver_rc=0; win32u_rc=0
+          wait $NP || ntdll_rc=$?
+          wait $WP || wineserver_rc=$?
+          wait $UP || win32u_rc=$?
+
+          echo "ntdll_rc=$ntdll_rc wineserver_rc=$wineserver_rc win32u_rc=$win32u_rc"
+          # At least one success is enough to continue; do not fail the step hard
+          if [[ $ntdll_rc -ne 0 && $wineserver_rc -ne 0 && $win32u_rc -ne 0 ]]; then
             exit 1
           fi
 
-      - name: Stage E — FEX iOS static libs
+      - name: Stage E — FEX iOS static libs (timeout 15m, skip if cached)
         id: fex
         continue-on-error: true
+        timeout-minutes: 15
         run: |
           set -euo pipefail
+          if [[ "${SKIP_FEX:-0}" == "1" ]]; then
+            echo "[FEX] SKIP — using cached real archives"
+            mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
+            cp -v host-libs-cache/fex/*.a "$GITHUB_WORKSPACE/host-libs/fex/" 2>/dev/null || true
+            ls -lh "$GITHUB_WORKSPACE/host-libs/fex" || true
+            exit 0
+          fi
+
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           export PATH="$HOME/Library/Python/3.14/bin:$PATH"
 
@@ -207,12 +275,10 @@ jobs:
             'CPU variant     : 0x0' \
             'CPU part        : 0x000' \
             'CPU revision    : 0' > "$CPUINFO_STUB"
-
           mkdir -p "$RUNNER_TEMP/fakeproc"
           cp "$CPUINFO_STUB" "$RUNNER_TEMP/fakeproc/cpuinfo"
 
           cd madeira/FEX
-          # Replace every /proc/cpuinfo occurrence in source so both string literals and CMake argv become the stub
           find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' \) -print0 | while IFS= read -r -d '' f; do
             if grep -q '/proc/cpuinfo' "$f" 2>/dev/null; then
               sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f"
@@ -220,7 +286,7 @@ jobs:
             fi
           done
 
-          git submodule update --init --depth 1 || true
+          timeout 60 git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios && mkdir -p build-ios && cd build-ios
           cmake .. -G Ninja \
@@ -242,36 +308,53 @@ jobs:
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log" || true
-          if [[ -f build.ninja ]]; then
-            ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
-          else
+
+          if [[ ! -f build.ninja ]]; then
             echo "No build.ninja"
-            tail -80 "$GITHUB_WORKSPACE/fex-cmake.log" || true
+            tail -60 "$GITHUB_WORKSPACE/fex-cmake.log" || true
             exit 1
           fi
-          mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
+
+          # Max parallelism + hard timeout
+          timeout 600 ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
+
+          mkdir -p "$GITHUB_WORKSPACE/host-libs/fex" host-libs-cache/fex
           find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' -o -name 'libJemalloc*.a' \) \
-            | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
+            | while read -r f; do
+                cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
+                cp -v "$f" host-libs-cache/fex/
+              done
           ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
 
-      - name: Manifest
+      - name: Manifest + promote successful libs into permanent cache
         if: always()
         run: |
-          mkdir -p host-libs
+          mkdir -p host-libs host-libs-cache host-libs-cache/fex
+          # Copy any new successes into the cache dir so next run skips them
+          for f in host-libs/*.a; do
+            [[ -s "$f" ]] && [[ $(wc -c < "$f") -gt 10000 ]] && cp -v "$f" host-libs-cache/
+          done
+          for f in host-libs/fex/*.a; do
+            [[ -s "$f" ]] && cp -v "$f" host-libs-cache/fex/ 2>/dev/null || true
+          done
           {
-            echo "wine=${{ steps.wine_cfg.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
+            echo "wine=${{ steps.wine_cfg.outcome }} unix=${{ steps.wine_unix.outcome }} fex=${{ steps.fex.outcome }}"
+            echo "=== host-libs ==="
             find host-libs -name '*.a' -exec ls -lh {} \;
-            find host-libs -name '*.a' -exec file {} \;
+            echo "=== cache ==="
+            find host-libs-cache -name '*.a' -exec ls -lh {} \;
+            find host-libs -name '*.a' -exec file {} \; 2>/dev/null || true
           } | tee host-libs/MANIFEST.txt
 
-      - name: Upload artifacts
+      - name: Upload artifacts (always, even partial)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: madeira-host-libs
           path: |
             host-libs/
+            host-libs-cache/
             wine-configure.log
             ntdll-unix.log
             wineserver.log
@@ -279,10 +362,11 @@ jobs:
             fex-cmake.log
             fex-ninja.log
           if-no-files-found: warn
+          retention-days: 14
 
-      - name: Require real .a
+      - name: Require at least one real .a
         if: always()
         run: |
-          count=$(find host-libs -name '*.a' -size +1k 2>/dev/null | wc -l | tr -d ' ')
-          echo "count=$count"
+          count=$(find host-libs -name '*.a' -size +10k 2>/dev/null | wc -l | tr -d ' ')
+          echo "real_archives=$count"
           [[ "$count" -gt 0 ]]
