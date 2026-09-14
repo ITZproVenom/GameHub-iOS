@@ -77,7 +77,7 @@ final class GameDetailViewModel: ObservableObject {
         )
 
         switch result {
-        case .success:
+        case .success, .successLaunched:
             gameService.recordPlay(gameID: game.id)
             game.lastPlayed = Date()
         case .runtimeNotInstalled:
@@ -144,8 +144,6 @@ final class GameDetailViewModel: ObservableObject {
         }
         containerStatus = await containerService.checkContainerState(withID: containerID)
     }
-
-    // MARK: - Artwork
 
     func loadArtwork() {
         guard let artworkFileName = game.artworkFileName else { return }
