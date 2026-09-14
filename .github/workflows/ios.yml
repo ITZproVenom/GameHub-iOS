@@ -1,0 +1,115 @@
+name: iOS Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Test (iOS)
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: |
+          set -euo pipefail
+          XCODE_PATH=$(ls /Applications | grep -E '^Xcode_[0-9]+\.app$' | sort -V | tail -1 || true)
+          if [[ -n "$XCODE_PATH" ]]; then
+            sudo xcode-select --switch "/Applications/$XCODE_PATH"
+          fi
+          xcodebuild -version
+          xcode-select -p
+
+      - name: List available simulators
+        run: xcrun simctl list devices available | head -40
+
+      - name: Resolve Swift package dependencies
+        run: xcodebuild -resolvePackageDependencies -project GameHub.xcodeproj -scheme GameHub
+
+      - name: Build app for simulator (Debug, no signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project GameHub.xcodeproj \
+            -scheme GameHub \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Run unit tests (simulator, no signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project GameHub.xcodeproj \
+            -scheme GameHub \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Build generic iOS device (Release, no signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project GameHub.xcodeproj \
+            -scheme GameHub \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedDataDevice \
+            -archivePath DerivedDataDevice/GameHub.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            -allowProvisioningUpdates \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="DerivedDataDevice/GameHub.xcarchive/Products/Applications/GameHub.app"
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "::error::App bundle not found at $APP_PATH"
+            ls -la DerivedDataDevice/GameHub.xcarchive/Products/Applications/ 2>/dev/null || true
+            exit 1
+          fi
+          mkdir -p "DerivedDataDevice/Payload"
+          cp -R "$APP_PATH" DerivedDataDevice/Payload/
+          pushd DerivedDataDevice
+          zip -qr GameHub-unsigned.ipa Payload
+          popd
+          echo "IPA created: DerivedDataDevice/GameHub-unsigned.ipa"
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameHub-app
+          path: DerivedData/Build/Products/Debug-iphonesimulator/GameHub.app
+          if-no-files-found: error
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameHub-unsigned-ipa
+          path: DerivedDataDevice/GameHub-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            DerivedData/Logs
+            DerivedDataDevice/Logs
+          if-no-files-found: ignore

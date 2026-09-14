@@ -1,6 +1,25 @@
-
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+GameHub.xcodeproj/project.xcworkspace/xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Vendor runtime source (fetched via Scripts/bootstrap-madeira.sh)
+vendor/
+
+# OS / tools
+.DS_Store
+*.swp
+*.lock
+.swiftpm/
