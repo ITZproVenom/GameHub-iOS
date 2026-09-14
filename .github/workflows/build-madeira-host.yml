@@ -98,15 +98,22 @@ jobs:
           test -f include/config.h
           ls -la include/config.h
 
-      - name: Stage B0 — gnutls-ios
+      - name: Stage B0 — gnutls-ios (timeout 240s)
         id: gnutls
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           cd madeira
-          bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log"
-          ls -lh toolchains/gnutls-ios/lib/*.a || true
+          # Hard timeout — previous runner hung in make for 20+ min
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 240 bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log" || true
+          else
+            # macOS may lack GNU timeout; use perl alarm
+            perl -e 'alarm 240; exec @ARGV' bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log" || true
+          fi
+          ls -lh toolchains/gnutls-ios/lib/*.a 2>/dev/null || echo "gnutls libs not produced (non-fatal)"
 
       - name: Stage B — libntdll_unix.a
         id: ntdll
@@ -119,7 +126,6 @@ jobs:
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
           set -e
-          # Always rebuild archive from every successful .o (macOS bash 3.x: no mapfile)
           OBJ=build/ntdll-unix/obj
           objs=()
           while IFS= read -r line; do
@@ -135,6 +141,11 @@ jobs:
           test -s app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
+          # Also ship gnutls statics if present
+          if ls toolchains/gnutls-ios/lib/*.a >/dev/null 2>&1; then
+            mkdir -p "$GITHUB_WORKSPACE/host-libs/gnutls"
+            cp -v toolchains/gnutls-ios/lib/*.a "$GITHUB_WORKSPACE/host-libs/gnutls/"
+          fi
           file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
           ar t app/Madeira/libntdll_unix.a | head -40
@@ -150,21 +161,18 @@ jobs:
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
           cd madeira && mkdir -p app/Madeira build/wineserver/obj
           if [[ ! -s app/Madeira/libwineserver.a ]]; then
-            # Seed with any existing server objects if we can compile a minimal set
             ar rcs app/Madeira/libwineserver.a
             cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
           fi
           set +e
           bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
           set -e
-          # Collect any objects the patch step produced
           OBJ=build/wineserver/obj
           objs=()
           while IFS= read -r line; do
             objs+=("$line")
           done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
           if [[ ${#objs[@]} -gt 0 ]]; then
-            # Prefer the patched archive if present and non-empty, else pack objs
             if [[ ! -s app/Madeira/libwineserver.a ]] || [[ $(wc -c < app/Madeira/libwineserver.a) -lt 1000 ]]; then
               ar rcs app/Madeira/libwineserver.a "${objs[@]}"
             fi
@@ -238,7 +246,6 @@ jobs:
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios && mkdir -p build-ios && cd build-ios
-          # FEX version script may still fail; force empty version rather than abort
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -258,7 +265,6 @@ jobs:
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log" || true
-          # If cmake wrote incomplete config, still try ninja on whatever targets exist
           if [[ -f build.ninja ]]; then
             ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
           else
