@@ -5,6 +5,7 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
   developmentLanguage: en
+  # Keep format readable by Xcode 15 / 16 on CI
   xcodeVersion: "15.0"
 settings:
   base:
@@ -18,6 +19,8 @@ targets:
     platform: iOS
     sources:
       - path: GameHub
+        excludes:
+          - "**/*.md"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gamehub.ios

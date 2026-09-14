@@ -13,74 +13,79 @@ concurrency:
 jobs:
   build:
     name: Build & Test (iOS)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode version
+      - name: Show Xcode
         run: |
           set -euo pipefail
-          XCODE_PATH=$(ls /Applications | grep -E '^Xcode_15.*\.app$' | sort -V | tail -1 || true)
-          if [[ -n "$XCODE_PATH" ]]; then
-            sudo xcode-select --switch "/Applications/$XCODE_PATH"
-          fi
           xcodebuild -version
           xcode-select -p
 
-      - name: Install XcodeGen 2.42.0
-        run: |
-          set -euo pipefail
-          brew install xcodegen
-          # Force objectVersion compatible with Xcode 15 via project.yml xcodeVersion
-          xcodegen --version
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
       - name: Generate Xcode project
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
+          # Force a project format every CI Xcode can open
           python3 - <<'PY'
 from pathlib import Path
 p = Path('GameHub.xcodeproj/project.pbxproj')
 text = p.read_text()
-# Downgrade future format if a newer XcodeGen emitted objectVersion 77.
-text = text.replace('objectVersion = 77;', 'objectVersion = 56;')
-text = text.replace('objectVersion = 63;', 'objectVersion = 56;')
-text = text.replace('objectVersion = 70;', 'objectVersion = 56;')
+import re
+text = re.sub(r'objectVersion = \d+;', 'objectVersion = 56;', text)
 p.write_text(text)
-print('objectVersion line:', [l.strip() for l in text.splitlines() if 'objectVersion' in l][:3])
+print([l.strip() for l in text.splitlines() if 'objectVersion' in l][:3])
 PY
 
-      - name: List available simulators
-        run: xcrun simctl list devices available | head -40
+      - name: Resolve simulator destination
+        id: sim
+        run: |
+          set -euo pipefail
+          # Prefer any available iPhone simulator
+          DEST=$(xcodebuild -showdestinations -project GameHub.xcodeproj -scheme GameHub 2>/dev/null \
+            | grep 'platform:iOS Simulator' | grep 'name:iPhone' | head -1 \
+            | sed -E 's/.*id:([A-F0-9-]+).*/id=\1/' || true)
+          if [[ -z "${DEST}" ]]; then
+            echo "destination=platform=iOS Simulator,name=iPhone 16" >> "$GITHUB_OUTPUT"
+          else
+            echo "destination=platform=iOS Simulator,${DEST}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Using: $(cat $GITHUB_OUTPUT)"
 
-      - name: Build app for simulator (Debug, no signing)
+      - name: Build app (Debug, no signing)
         run: |
           set -euo pipefail
           xcodebuild \
             -project GameHub.xcodeproj \
             -scheme GameHub \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination '${{ steps.sim.outputs.destination }}' \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             build
 
-      - name: Run unit tests (simulator, no signing)
+      - name: Run unit tests
         run: |
           set -euo pipefail
           xcodebuild \
             -project GameHub.xcodeproj \
             -scheme GameHub \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination '${{ steps.sim.outputs.destination }}' \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             test
 
-      - name: Build generic iOS device (Release, no signing)
+      - name: Archive generic iOS (Release, unsigned)
         run: |
           set -euo pipefail
           xcodebuild \
@@ -91,23 +96,19 @@ PY
             -derivedDataPath DerivedDataDevice \
             -archivePath DerivedDataDevice/GameHub.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            -quiet \
             archive
 
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
           APP_PATH="DerivedDataDevice/GameHub.xcarchive/Products/Applications/GameHub.app"
-          if [[ ! -d "$APP_PATH" ]]; then
-            echo "::error::App bundle not found at $APP_PATH"
-            ls -la DerivedDataDevice/GameHub.xcarchive/Products/Applications/ 2>/dev/null || true
-            exit 1
-          fi
-          mkdir -p "DerivedDataDevice/Payload"
+          test -d "$APP_PATH"
+          mkdir -p DerivedDataDevice/Payload
           cp -R "$APP_PATH" DerivedDataDevice/Payload/
-          pushd DerivedDataDevice
-          zip -qr GameHub-unsigned.ipa Payload
-          popd
-          echo "IPA created: DerivedDataDevice/GameHub-unsigned.ipa"
+          (cd DerivedDataDevice && zip -qr GameHub-unsigned.ipa Payload)
+          ls -lh DerivedDataDevice/GameHub-unsigned.ipa
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
@@ -122,13 +123,3 @@ PY
           name: GameHub-unsigned-ipa
           path: DerivedDataDevice/GameHub-unsigned.ipa
           if-no-files-found: error
-
-      - name: Upload build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            DerivedData/Logs
-            DerivedDataDevice/Logs
-          if-no-files-found: ignore

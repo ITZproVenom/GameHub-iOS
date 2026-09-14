@@ -1,17 +1,32 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject private var appState: AppState
-    @EnvironmentObject private var libraryViewModel: LibraryViewModel
-    @EnvironmentObject private var settingsViewModel: SettingsViewModel
-
     var body: some View {
-        NavigationStack {
+        TabView {
             LibraryView()
+                .tabItem {
+                    Label("Library", systemImage: "square.grid.2x2.fill")
+                }
+
+            CloudPlayView()
+                .tabItem {
+                    Label("Cloud", systemImage: "cloud.fill")
+                }
+
+            ImportView()
+                .tabItem {
+                    Label("Import", systemImage: "plus.circle.fill")
+                }
+
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
         }
-        .tint(.accentColor)
-        .onAppear {
-            libraryViewModel.refreshRuntimeStatus()
-        }
+        .tint(Color(red: 0.49, green: 0.23, blue: 0.93))
     }
+}
+
+#Preview {
+    ContentView()
 }
