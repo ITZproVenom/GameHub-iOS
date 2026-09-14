@@ -8,7 +8,7 @@ on:
       - ".github/workflows/build-madeira-host.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
@@ -63,10 +63,6 @@ jobs:
           done
           [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
-          if [[ -f app/Madeira/PrefixExtractor.c ]]; then
-            cp -v app/Madeira/PrefixExtractor.c "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.c"
-            cp -v app/Madeira/PrefixExtractor.h "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.h"
-          fi
           du -sh "$RT"
           test -f "$RT/prefix-template.tar.gz"
           test -d "$RT/aarch64-windows"
@@ -155,18 +151,3 @@ jobs:
           path: build/GameHub-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
-
-      - name: Publish release
-        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ios-runtime-unsigned-${{ github.run_number }}-${{ github.sha }}
-          name: GameHub unsigned + Madeira runtime #${{ github.run_number }}
-          prerelease: true
-          body: |
-            Unsigned IPA with Madeira PE sysroots + prefix-template (${{ env.MADEIRA_COMMIT }}).
-            Install with AltStore / Sideloadly / TrollStore + JIT debugger.
-          files: build/GameHub-unsigned.ipa
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
