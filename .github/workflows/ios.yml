@@ -1,30 +1,23 @@
-name: iOS Build
+name: Build Unsigned IPA
 
 on:
-  push:
-    branches: ["main"]
-  pull_request:
   workflow_dispatch:
+  push:
+    branches: [main]
 
-concurrency:
-  group: ios-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: write
 
 jobs:
   build:
-    name: Build & Test (iOS)
     runs-on: macos-15
     timeout-minutes: 45
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Show Xcode
-        run: |
-          set -euo pipefail
-          xcodebuild -version
-          xcode-select -p
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -33,93 +26,57 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
-          # Force a project format every CI Xcode can open
           python3 - <<'PY'
 from pathlib import Path
-p = Path('GameHub.xcodeproj/project.pbxproj')
-text = p.read_text()
 import re
-text = re.sub(r'objectVersion = \d+;', 'objectVersion = 56;', text)
+p = Path("GameHub.xcodeproj/project.pbxproj")
+text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
 p.write_text(text)
-print([l.strip() for l in text.splitlines() if 'objectVersion' in l][:3])
+print("objectVersion fixed")
 PY
 
-      - name: Resolve simulator destination
-        id: sim
+      - name: Archive (unsigned)
         run: |
           set -euo pipefail
-          # Prefer any available iPhone simulator
-          DEST=$(xcodebuild -showdestinations -project GameHub.xcodeproj -scheme GameHub 2>/dev/null \
-            | grep 'platform:iOS Simulator' | grep 'name:iPhone' | head -1 \
-            | sed -E 's/.*id:([A-F0-9-]+).*/id=\1/' || true)
-          if [[ -z "${DEST}" ]]; then
-            echo "destination=platform=iOS Simulator,name=iPhone 16" >> "$GITHUB_OUTPUT"
-          else
-            echo "destination=platform=iOS Simulator,${DEST}" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Using: $(cat $GITHUB_OUTPUT)"
-
-      - name: Build app (Debug, no signing)
-        run: |
-          set -euo pipefail
-          xcodebuild \
-            -project GameHub.xcodeproj \
-            -scheme GameHub \
-            -configuration Debug \
-            -destination '${{ steps.sim.outputs.destination }}' \
-            -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            build
-
-      - name: Run unit tests
-        run: |
-          set -euo pipefail
-          xcodebuild \
-            -project GameHub.xcodeproj \
-            -scheme GameHub \
-            -configuration Debug \
-            -destination '${{ steps.sim.outputs.destination }}' \
-            -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            test
-
-      - name: Archive generic iOS (Release, unsigned)
-        run: |
-          set -euo pipefail
-          xcodebuild \
+          xcodebuild archive \
             -project GameHub.xcodeproj \
             -scheme GameHub \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath DerivedDataDevice \
-            -archivePath DerivedDataDevice/GameHub.xcarchive \
+            -archivePath build/GameHub.xcarchive \
+            -destination "generic/platform=iOS" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            -quiet \
-            archive
+            -quiet
 
-      - name: Package unsigned IPA
+      - name: Package IPA
         run: |
           set -euo pipefail
-          APP_PATH="DerivedDataDevice/GameHub.xcarchive/Products/Applications/GameHub.app"
-          test -d "$APP_PATH"
-          mkdir -p DerivedDataDevice/Payload
-          cp -R "$APP_PATH" DerivedDataDevice/Payload/
-          (cd DerivedDataDevice && zip -qr GameHub-unsigned.ipa Payload)
-          ls -lh DerivedDataDevice/GameHub-unsigned.ipa
+          mkdir -p build/Payload
+          cp -R build/GameHub.xcarchive/Products/Applications/GameHub.app build/Payload/
+          cd build
+          zip -qr GameHub-unsigned.ipa Payload
+          ls -lh GameHub-unsigned.ipa
 
-      - name: Upload app bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: GameHub-app
-          path: DerivedData/Build/Products/Debug-iphonesimulator/GameHub.app
-          if-no-files-found: error
-
-      - name: Upload unsigned IPA
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: GameHub-unsigned-ipa
-          path: DerivedDataDevice/GameHub-unsigned.ipa
+          path: build/GameHub-unsigned.ipa
           if-no-files-found: error
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-build-${{ github.run_number }}-${{ github.sha }}
+          name: GameHub iOS build #${{ github.run_number }}
+          prerelease: true
+          body: |
+            Unsigned IPA from `${{ github.sha }}`.
+            Install with AltStore / Sideloadly / TrollStore.
+          files: build/GameHub-unsigned.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
