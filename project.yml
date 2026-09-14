@@ -20,7 +20,6 @@ targets:
       - path: GameHub
         excludes:
           - "**/*.md"
-          # Runtime is copied as a folder resource (preserves PE trees)
           - "Resources/Runtime/**"
     resources:
       - path: GameHub/Resources/Runtime
@@ -38,6 +37,16 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         SUPPORTS_MACCATALYST: NO
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SWIFT_OBJC_BRIDGING_HEADER: GameHub/Native/Madeira/GameHub-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/GameHub/Native/Madeira"
+        OTHER_LDFLAGS:
+          - -framework
+          - Metal
+          - -framework
+          - QuartzCore
+          - -framework
+          - UIKit
     scheme:
       testTargets:
         - GameHubTests
