@@ -31,7 +31,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Fetch Madeira runtime PE + prefix (pinned)
+      - name: Fetch Madeira PE + bridges + prefix
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000
@@ -55,7 +55,6 @@ jobs:
           if [[ -f app/Madeira/prefix-template.tar.gz ]]; then
             cp -v app/Madeira/prefix-template.tar.gz "$RT/"
           else
-            echo "prefix-template.tar.gz missing — synthesizing minimal prefix tarball"
             mkdir -p /tmp/pfx/drive_c/windows/system32
             echo "Madeira minimal prefix" > /tmp/pfx/README
             (cd /tmp/pfx && tar czf "$RT/prefix-template.tar.gz" .)
@@ -67,12 +66,24 @@ jobs:
           [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
+          # Real Madeira bridge sources (strong symbols override HostWeakStubs)
+          NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
+          for f in WineServerBridge.m WineProcessBridge.m FEXBridge.mm IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
+            if [[ -f "app/Madeira/$f" ]]; then
+              cp -v "app/Madeira/$f" "$NAT/$f"
+            fi
+          done
+          for f in WineServerBridge.h WineProcessBridge.h FEXBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
+            if [[ -f "app/Madeira/$f" ]]; then
+              cp -v "app/Madeira/$f" "$NAT/$f"
+            fi
+          done
+
           echo "=== Runtime payload ==="
           du -sh "$RT"
           test -f "$RT/prefix-template.tar.gz"
           test -f "$RT/aarch64-windows/d3d11.dll" || test -f "$RT/arm64ec-windows/d3d11.dll"
           BYTES=$(du -sk "$RT" | awk '{print $1 * 1024}')
-          echo "runtime_bytes=$BYTES"
           [[ "$BYTES" -gt 20000000 ]]
 
       - name: Try restore host static libs artifact
@@ -82,14 +93,28 @@ jobs:
           set -euo pipefail
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
           mkdir -p "$HL"
-          RUN_ID=$(gh run list --workflow=build-madeira-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          RUN_ID=$(gh run list --workflow="Build Madeira Host Libs" --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [[ -z "${RUN_ID:-}" ]]; then
+            RUN_ID=$(gh run list --workflow=build-madeira-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          fi
           if [[ -n "${RUN_ID:-}" ]]; then
             echo "Downloading host-libs from run $RUN_ID"
             mkdir -p /tmp/hl
             gh run download "$RUN_ID" -n madeira-host-libs -D /tmp/hl 2>/dev/null || true
             find /tmp/hl -name '*.a' -size +10k -exec cp -v {} "$HL/" \; || true
+            find /tmp/hl -path '*/fex/*.a' -size +10k -exec cp -v {} "$HL/" \; || true
           fi
-          ls -lh "$HL" 2>/dev/null || echo "(empty HostLibs)"
+          echo "=== HostLibs ==="
+          ls -lh "$HL" 2>/dev/null || echo "(empty)"
+          {
+            echo "host_libs_present=0"
+            for lib in libntdll_unix.a libwineserver.a libFEXCore.a libdxmt_combined.a; do
+              if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
+                echo "  FOUND $lib $(wc -c < "$HL/$lib")"
+                echo "host_libs_present=1" >> "$GITHUB_ENV"
+              fi
+            done
+          } | tee "$HL/STATUS.txt" || true
 
       - name: Generate Xcode project
         run: |
@@ -110,7 +135,7 @@ jobs:
           set -euo pipefail
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
           EXTRA_LD=""
-          for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libdxmt_combined.a; do
+          for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a; do
             if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
               EXTRA_LD="$EXTRA_LD -force_load $HL/$lib"
               echo "force_load $lib"
@@ -126,7 +151,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            OTHER_LDFLAGS="$EXTRA_LD -framework Metal -framework QuartzCore -framework UIKit -lz"
+            OTHER_LDFLAGS="$EXTRA_LD -framework Metal -framework QuartzCore -framework UIKit -lz -lc++"
 
       - name: Package IPA + force-embed Runtime + verify
         run: |
@@ -195,6 +220,11 @@ jobs:
           STAMP="$(date -u +'%Y%m%d-%H%M')"
           RUN="${{ github.run_number }}"
           SIZE=$(ls -lh build/GameHub.ipa | awk '{print $5}')
+          HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
+          HOST_STATUS="stubs only (host CI not yet producing .a)"
+          if ls "$HL"/*.a 1>/dev/null 2>&1; then
+            HOST_STATUS="partial host libs: $(ls "$HL"/*.a 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
+          fi
           echo "tag=ios-runtime-${STAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "name=GameHub iOS + Madeira runtime #${RUN} (${SHORT_SHA})" >> "$GITHUB_OUTPUT"
           {
@@ -203,14 +233,14 @@ jobs:
             echo "**Build:** \`${SHORT_SHA}\`"
             echo "**IPA size:** ${SIZE}"
             echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
+            echo "**Host libs:** ${HOST_STATUS}"
             echo ""
-            echo "PE sysroots + prefix-template + real PrefixExtractor (-lz)."
-            echo "Host static libs linked when madeira-host CI produces them."
+            echo "PE sysroots + prefix-template + PrefixExtractor + Madeira bridge sources."
             echo ""
             echo "### Install"
-            echo "Unsigned IPA — use **AltStore** / **Sideloadly** / **TrollStore** + JIT debugger (StikDebug)."
+            echo "Unsigned — **AltStore** / **Sideloadly** / **TrollStore** + JIT (StikDebug)."
             echo ""
-            echo "**Always-latest download:** [GameHub.ipa (latest)](https://github.com/ITZproVenom/GameHub-iOS/releases/latest/download/GameHub.ipa)"
+            echo "**Latest:** [GameHub.ipa](https://github.com/ITZproVenom/GameHub-iOS/releases/latest/download/GameHub.ipa)"
           } > release_notes.md
 
       - name: Publish versioned GitHub Release
@@ -226,7 +256,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Stable always-updated release (same pattern as GameStream)
       - name: Publish / update latest release
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
