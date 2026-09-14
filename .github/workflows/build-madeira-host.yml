@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v7
+  CACHE_VERSION: v8
 
 jobs:
   host-libs:
@@ -35,8 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: host-libs-cache
-          key: madeira-host-v7-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v8-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
+            madeira-host-v8-
             madeira-host-v7-
             madeira-host-
 
@@ -91,10 +92,11 @@ jobs:
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           mkdir -p app/Madeira "$GITHUB_WORKSPACE/host-libs"
+          # Prefer rebuild; only use cache if very large (real full archive)
           if [ -s "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" ]; then
             SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a")
-            if [ "$SZ" -gt 100000 ]; then
-              echo using-cached-ntdll
+            if [ "$SZ" -gt 1200000 ]; then
+              echo using-cached-ntdll size=$SZ
               cp -v "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" app/Madeira/
               exit 0
             fi
@@ -125,7 +127,7 @@ jobs:
       - name: Build FEX iOS
         id: fex
         continue-on-error: true
-        timeout-minutes: 35
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           python3 -m pip install --break-system-packages --user packaging setuptools || true
@@ -143,26 +145,31 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fakeproc"
           cp "$CPUINFO_STUB" "$RUNNER_TEMP/fakeproc/cpuinfo"
           cd madeira/FEX
-          find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' \) -print0 | while IFS= read -r -d '' f; do
+          # Patch every reference to /proc/cpuinfo (Python scripts + CMake)
+          find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' -o -name '*.cpp' -o -name '*.h' \) -print0 | while IFS= read -r -d '' f; do
             if grep -q '/proc/cpuinfo' "$f" 2>/dev/null; then
               sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f" || true
             fi
           done
+          # Comprehensive Madeira iOS log/counter stubs required by Core.cpp etc.
           mkdir -p FEXCore/include
-          {
-            echo '#pragma once'
-            echo '#include <stdint.h>'
-            echo '#ifdef __cplusplus'
-            echo 'extern "C" {'
-            echo '#endif'
-            echo '#ifndef IOS_CB_ENTRY_LOG_DEFINED'
-            echo '#define IOS_CB_ENTRY_LOG_DEFINED'
-            echo 'static uint64_t IosCbEntryLog[8] = {};'
-            echo '#endif'
-            echo '#ifdef __cplusplus'
-            echo '}'
-            echo '#endif'
-          } > FEXCore/include/IosCbEntryLog.h
+          cat > FEXCore/include/IosCbEntryLog.h << 'HDR'
+#pragma once
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#ifndef IOS_MADEIRA_STUBS_DEFINED
+#define IOS_MADEIRA_STUBS_DEFINED
+static uint64_t IosCbEntryLog[8] = {};
+static uint64_t IosFfsBypassLog[8] = {};
+static volatile uint64_t g_madeira_thr_count[16] = {};
+static volatile uint64_t g_madeira_hot_count[64] = {};
+#endif
+#ifdef __cplusplus
+}
+#endif
+HDR
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios
@@ -205,7 +212,7 @@ jobs:
             echo FEX-OK
           else
             echo FEX-MISSING
-            tail -40 "$GITHUB_WORKSPACE/fex-ninja.log" || true
+            tail -80 "$GITHUB_WORKSPACE/fex-ninja.log" || true
           fi
 
       - name: Manifest and cache
