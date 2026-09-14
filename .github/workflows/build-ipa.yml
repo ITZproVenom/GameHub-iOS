@@ -4,14 +4,20 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/workflows/build-madeira-host.yml"
 
 permissions:
   contents: write
 
+env:
+  MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
+  MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +29,60 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Fetch Madeira runtime PE + prefix (pinned)
+        run: |
+          set -euo pipefail
+          export GIT_HTTP_LOW_SPEED_LIMIT=1000
+          export GIT_HTTP_LOW_SPEED_TIME=60
+          rm -rf /tmp/madeira-rt
+          git clone --depth 1 --filter=blob:none --sparse "$MADEIRA_REPO" /tmp/madeira-rt
+          cd /tmp/madeira-rt
+          git fetch --depth 1 origin "$MADEIRA_COMMIT"
+          git checkout "$MADEIRA_COMMIT"
+          git sparse-checkout set app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
+            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
+            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
+            app/Madeira/nls app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h
+          # Materialize blobs for sparse paths
+          git sparse-checkout reapply || true
+          # Fallback if sparse missed files: checkout paths
+          git checkout "$MADEIRA_COMMIT" -- app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
+            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
+            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
+            app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h 2>/dev/null || true
+
+          RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
+          mkdir -p "$RT"
+          rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows"
+          cp -R app/Madeira/aarch64-windows "$RT/"
+          cp -R app/Madeira/arm64ec-windows "$RT/"
+          cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          cp -v app/Madeira/cacert.pem "$RT/" 2>/dev/null || true
+          for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
+            [[ -f "app/Madeira/$lib" ]] && cp -v "app/Madeira/$lib" "$RT/"
+          done
+          if [[ -d app/Madeira/nls ]]; then
+            cp -R app/Madeira/nls "$RT/"
+          fi
+          echo "$MADEIRA_COMMIT" > "$RT/VERSION"
+          echo "Madeira @$MADEIRA_COMMIT" >> "$RT/VERSION"
+
+          # Real PrefixExtractor (overrides weak stub)
+          if [[ -f app/Madeira/PrefixExtractor.c ]]; then
+            cp -v app/Madeira/PrefixExtractor.c "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.c"
+            cp -v app/Madeira/PrefixExtractor.h "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.h"
+          fi
+
+          echo "=== Runtime payload ==="
+          du -sh "$RT" "$RT"/* 2>/dev/null | head -30
+          test -f "$RT/prefix-template.tar.gz"
+          test -d "$RT/aarch64-windows"
+          test -f "$RT/aarch64-windows/d3d11.dll" || test -f "$RT/arm64ec-windows/d3d11.dll"
+          test -f "$RT/VERSION"
+          BYTES=$(du -sb "$RT" | awk '{print $1}')
+          echo "runtime_bytes=$BYTES"
+          [[ "$BYTES" -gt 20000000 ]]
 
       - name: Generate Xcode project
         run: |
@@ -57,7 +117,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: Package IPA
+      - name: Package IPA + verify runtime inside
         run: |
           set -euo pipefail
           APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
@@ -68,13 +128,32 @@ jobs:
           cp -R "$APP" build/Payload/
           (cd build && zip -qr GameHub.ipa Payload)
           ls -lh build/GameHub.ipa
-          python3 -c '
-          import zipfile
-          z = zipfile.ZipFile("build/GameHub.ipa")
+          python3 << 'PY'
+          import zipfile, os, sys
+          path = "build/GameHub.ipa"
+          size = os.path.getsize(path)
+          print(f"IPA size: {size} bytes ({size/1024/1024:.1f} MiB)")
+          z = zipfile.ZipFile(path)
           names = z.namelist()
-          assert any(n.endswith("GameHub.app/GameHub") for n in names), names[:40]
-          print("IPA entries", len(names))
-          '
+          print(f"entries: {len(names)}")
+          assert any(n.endswith("GameHub.app/GameHub") for n in names), "missing binary"
+          # Runtime markers
+          need = [
+              "prefix-template.tar.gz",
+              "VERSION",
+              "d3d11.dll",
+          ]
+          joined = "\n".join(names)
+          for m in need:
+              hits = [n for n in names if n.endswith(m) or f"/{m}" in n]
+              print(f"  {m}: {len(hits)} hit(s)", hits[:3])
+              assert hits, f"IPA missing {m}"
+          # Must not be a shell-only IPA
+          if size < 20_000_000:
+              print("ERROR: IPA still too small — runtime not embedded", file=sys.stderr)
+              sys.exit(1)
+          print("VERIFIED: runtime-bearing IPA")
+          PY
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -82,6 +161,7 @@ jobs:
           name: GameHub-ipa
           path: build/GameHub.ipa
           if-no-files-found: error
+          retention-days: 30
 
       - name: Changelog
         id: meta
@@ -89,20 +169,21 @@ jobs:
           SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
           STAMP="$(date -u +'%Y%m%d-%H%M')"
           RUN="${{ github.run_number }}"
-          echo "tag=ios-build-${STAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "name=GameHub iOS build #${RUN} (${SHORT_SHA})" >> "$GITHUB_OUTPUT"
+          SIZE=$(ls -lh build/GameHub.ipa | awk '{print $5}')
+          echo "tag=ios-runtime-${STAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "name=GameHub iOS + Madeira runtime #${RUN} (${SHORT_SHA})" >> "$GITHUB_OUTPUT"
           {
-            echo "## GameHub iOS"
+            echo "## GameHub iOS + Madeira runtime"
             echo ""
             echo "**Build:** \`${SHORT_SHA}\`"
+            echo "**IPA size:** ${SIZE}"
+            echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
             echo ""
-            echo "Unsigned IPA — install with AltStore / Sideloadly / TrollStore."
+            echo "Unsigned IPA with PE sysroots (aarch64-windows + arm64ec-windows),"
+            echo "prefix-template.tar.gz, VERSION, and crypto host archives."
+            echo "Install with AltStore / Sideloadly / TrollStore + JIT debugger."
             echo ""
-            echo "### Runtime"
-            echo "Local Windows .exe launch requires Madeira binaries in the Runtime folder."
-            echo ""
-            echo "### Commits"
-            git log --max-count=12 --pretty=format:'- %s (%h)' --no-merges
+            echo "Host static Wine/FEX link libs continue via build-madeira-host workflow."
           } > release_notes.md
 
       - name: Publish GitHub Release
