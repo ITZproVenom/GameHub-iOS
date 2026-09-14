@@ -69,7 +69,6 @@ jobs:
 
           echo "=== Runtime payload ==="
           du -sh "$RT"
-          du -sh "$RT"/* 2>/dev/null | sort -h | tail -20
           test -f "$RT/prefix-template.tar.gz"
           test -f "$RT/aarch64-windows/d3d11.dll" || test -f "$RT/arm64ec-windows/d3d11.dll"
           BYTES=$(du -sk "$RT" | awk '{print $1 * 1024}')
@@ -83,18 +82,14 @@ jobs:
           set -euo pipefail
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
           mkdir -p "$HL"
-          # Pull latest madeira-host-libs artifact if any (non-fatal)
-          gh run list --workflow=build-madeira-host.yml --status=success --limit 5 --json databaseId,conclusion 2>/dev/null | head -5 || true
           RUN_ID=$(gh run list --workflow=build-madeira-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
           if [[ -n "${RUN_ID:-}" ]]; then
             echo "Downloading host-libs from run $RUN_ID"
             mkdir -p /tmp/hl
             gh run download "$RUN_ID" -n madeira-host-libs -D /tmp/hl 2>/dev/null || true
             find /tmp/hl -name '*.a' -size +10k -exec cp -v {} "$HL/" \; || true
-            find /tmp/hl -path '*/fex/*.a' -size +10k -exec cp -v {} "$HL/" \; || true
           fi
-          echo "=== HostLibs ==="
-          ls -lh "$HL" 2>/dev/null || echo "(empty)"
+          ls -lh "$HL" 2>/dev/null || echo "(empty HostLibs)"
 
       - name: Generate Xcode project
         run: |
@@ -110,15 +105,16 @@ jobs:
           print("xcodegen ok", len(text))
           '
 
-      - name: Archive unsigned (optional host libs)
+      - name: Archive unsigned
         run: |
           set -euo pipefail
+          # Host .a force_load only when present (empty EXTRA is fine)
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
-          EXTRA=()
+          EXTRA_LD=""
           for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libdxmt_combined.a; do
             if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
-              EXTRA+=("-force_load" "$HL/$lib")
-              echo "Will force_load $lib"
+              EXTRA_LD="$EXTRA_LD -force_load $HL/$lib"
+              echo "force_load $lib"
             fi
           done
           xcodebuild archive \
@@ -131,7 +127,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            "OTHER_LDFLAGS=${EXTRA[*]} -framework Metal -framework QuartzCore -framework UIKit -lz"
+            OTHER_LDFLAGS="$EXTRA_LD -framework Metal -framework QuartzCore -framework UIKit -lz"
 
       - name: Package IPA + force-embed Runtime + verify
         run: |
@@ -157,7 +153,6 @@ jobs:
           done
           [[ -d "$RT/nls" ]] && cp -R "$RT/nls" "$APP/Runtime/" || true
 
-          echo "=== App Runtime after embed ==="
           du -sh "$APP/Runtime"
           test -f "$APP/Runtime/aarch64-windows/d3d11.dll" || test -f "$APP/Runtime/arm64ec-windows/d3d11.dll"
           test -f "$APP/Runtime/prefix-template.tar.gz"
@@ -175,7 +170,6 @@ jobs:
           print(f"IPA size: {size} bytes ({size/1024/1024:.1f} MiB)")
           z = zipfile.ZipFile(path)
           names = z.namelist()
-          print(f"entries: {len(names)}")
           assert any(n.endswith("GameHub.app/GameHub") for n in names), "missing binary"
           for m in ("prefix-template.tar.gz", "VERSION", "d3d11.dll"):
               hits = [n for n in names if n.endswith(m)]
@@ -211,8 +205,8 @@ jobs:
             echo "**IPA size:** ${SIZE}"
             echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
             echo ""
-            echo "PE sysroots + prefix-template + real PrefixExtractor."
-            echo "Host static libs (wineserver/FEX/DXMT) linked when madeira-host CI produces them."
+            echo "PE sysroots + prefix-template + real PrefixExtractor (-lz)."
+            echo "Host static libs linked when madeira-host CI produces them."
             echo "Unsigned — AltStore / Sideloadly / TrollStore + JIT debugger."
           } > release_notes.md
 
