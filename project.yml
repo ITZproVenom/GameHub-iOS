@@ -40,6 +40,10 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: GameHub/Native/Madeira/GameHub-Bridging-Header.h
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/GameHub/Native/Madeira"
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/GameHub/Native/Madeira/HostLibs"
+          - "$(SRCROOT)/host-libs"
+          - "$(SRCROOT)/host-libs/fex"
         OTHER_LDFLAGS:
           - -framework
           - Metal
@@ -47,6 +51,18 @@ targets:
           - QuartzCore
           - -framework
           - UIKit
+          - -lz
+          # Optional host static libs (present after madeira-host CI succeeds)
+          - -force_load
+          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libwineserver.a
+          - -force_load
+          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libntdll_unix.a
+          - -force_load
+          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libwin32u_unix.a
+          - -force_load
+          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libFEXCore.a
+          - -force_load
+          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libdxmt_combined.a
     scheme:
       testTargets:
         - GameHubTests
