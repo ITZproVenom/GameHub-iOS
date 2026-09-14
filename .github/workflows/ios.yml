@@ -23,23 +23,35 @@ jobs:
       - name: Select Xcode version
         run: |
           set -euo pipefail
-          XCODE_PATH=$(ls /Applications | grep -E '^Xcode_[0-9]+\.app$' | sort -V | tail -1 || true)
+          XCODE_PATH=$(ls /Applications | grep -E '^Xcode_15.*\.app$' | sort -V | tail -1 || true)
           if [[ -n "$XCODE_PATH" ]]; then
             sudo xcode-select --switch "/Applications/$XCODE_PATH"
           fi
           xcodebuild -version
           xcode-select -p
 
-      - name: Install XcodeGen
+      - name: Install XcodeGen 2.42.0
         run: |
           set -euo pipefail
           brew install xcodegen
+          # Force objectVersion compatible with Xcode 15 via project.yml xcodeVersion
           xcodegen --version
 
       - name: Generate Xcode project
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
+          python3 - <<'PY'
+from pathlib import Path
+p = Path('GameHub.xcodeproj/project.pbxproj')
+text = p.read_text()
+# Downgrade future format if a newer XcodeGen emitted objectVersion 77.
+text = text.replace('objectVersion = 77;', 'objectVersion = 56;')
+text = text.replace('objectVersion = 63;', 'objectVersion = 56;')
+text = text.replace('objectVersion = 70;', 'objectVersion = 56;')
+p.write_text(text)
+print('objectVersion line:', [l.strip() for l in text.splitlines() if 'objectVersion' in l][:3])
+PY
 
       - name: List available simulators
         run: xcrun simctl list devices available | head -40
