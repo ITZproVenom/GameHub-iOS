@@ -19,19 +19,18 @@ jobs:
   host-libs:
     name: Build host static libraries
     runs-on: macos-15
-    timeout-minutes: 360
+    timeout-minutes: 120
 
     steps:
       - name: Install build deps + llvm-mingw
         run: |
           set -euo pipefail
-          brew install cmake ninja flex bison pkg-config wget python3 llvm || true
-          python3 -m pip install --break-system-packages --user packaging setuptools || \
-            pip3 install --break-system-packages --user packaging setuptools || true
+          # Skip brew llvm (1.9GB) — llvm-mingw provides objcopy/dlltool
+          brew install cmake ninja flex bison pkg-config wget python3 || true
+          python3 -m pip install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
-          echo "/opt/homebrew/opt/llvm/bin" >> "$GITHUB_PATH"
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
 
           mkdir -p "$HOME/toolchains"
           if [[ ! -x "$HOME/toolchains/llvm-mingw/bin/aarch64-w64-mingw32-clang" ]]; then
@@ -44,26 +43,22 @@ jobs:
           export PATH="$HOME/toolchains/llvm-mingw/bin:$PATH"
           aarch64-w64-mingw32-clang --version | head -1 || true
           which llvm-objcopy || true
-
-          echo "BISON=$(command -v bison)"; bison --version | head -1
-          echo "FLEX=$(command -v flex)"; flex --version | head -1
-          python3 -c "from packaging.version import Version; print('packaging OK', Version('1.0'))" || true
+          bison --version | head -1
+          flex --version | head -1
 
       - name: Clone Madeira + wine + FEX
         run: |
           set -euo pipefail
+          export GIT_HTTP_LOW_SPEED_LIMIT=1000
+          export GIT_HTTP_LOW_SPEED_TIME=60
           rm -rf madeira
-          git clone --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
+          git clone --depth 1 --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          for f in build/gnutls-ios/src/gmp-6.3.0.tar.xz \
-                   build/gnutls-ios/src/nettle-3.10.1.tar.gz \
-                   build/gnutls-ios/src/gnutls-3.8.9.tar.xz; do
-            git checkout HEAD -- "$f" 2>/dev/null || true
-            ls -lh "$f" || true
-          done
-          git submodule update --init --depth 1 wine FEX
+          # Submodules: depth 1 only, sequential to avoid stalls
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow wine
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow FEX
           echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
       - name: Stage A — Wine host configure
@@ -74,8 +69,6 @@ jobs:
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           export BISON="/opt/homebrew/opt/bison/bin/bison"
           export FLEX="/opt/homebrew/opt/flex/bin/flex"
-          "$BISON" --version | head -1
-          which aarch64-w64-mingw32-clang
           cd madeira/wine
           mkdir -p build-macos && cd build-macos
           set +e
@@ -90,7 +83,7 @@ jobs:
             > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
           rc=$?
           set -e
-          tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          tail -30 "$GITHUB_WORKSPACE/wine-configure.log" || true
           if [[ $rc -ne 0 ]]; then
             echo "configure exit $rc"
             exit $rc
@@ -98,24 +91,7 @@ jobs:
           test -f include/config.h
           ls -la include/config.h
 
-      - name: Stage B0 — gnutls-ios (timeout 240s)
-        id: gnutls
-        if: steps.wine_cfg.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          cd madeira
-          # Hard timeout — previous runner hung in make for 20+ min
-          if command -v timeout >/dev/null 2>&1; then
-            timeout 240 bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log" || true
-          else
-            # macOS may lack GNU timeout; use perl alarm
-            perl -e 'alarm 240; exec @ARGV' bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log" || true
-          fi
-          ls -lh toolchains/gnutls-ios/lib/*.a 2>/dev/null || echo "gnutls libs not produced (non-fatal)"
-
-      - name: Stage B — libntdll_unix.a
+      - name: Stage B — libntdll_unix.a (core objs; gnutls optional)
         id: ntdll
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
@@ -141,11 +117,6 @@ jobs:
           test -s app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
-          # Also ship gnutls statics if present
-          if ls toolchains/gnutls-ios/lib/*.a >/dev/null 2>&1; then
-            mkdir -p "$GITHUB_WORKSPACE/host-libs/gnutls"
-            cp -v toolchains/gnutls-ios/lib/*.a "$GITHUB_WORKSPACE/host-libs/gnutls/"
-          fi
           file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
           ar t app/Madeira/libntdll_unix.a | head -40
@@ -158,7 +129,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
+          export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira && mkdir -p app/Madeira build/wineserver/obj
           if [[ ! -s app/Madeira/libwineserver.a ]]; then
             ar rcs app/Madeira/libwineserver.a
@@ -184,7 +155,7 @@ jobs:
             ls -lh app/Madeira/libwineserver.a
             ar t app/Madeira/libwineserver.a | head -20 || true
           else
-            echo "wineserver archive empty or missing after bootstrap"
+            echo "wineserver archive empty"
             ls -la "$OBJ" || true
             exit 1
           fi
@@ -222,7 +193,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --break-system-packages --user packaging setuptools || true
-          export PATH="$HOME/Library/Python/3.14/bin:$HOME/Library/Python/3.*/bin:$PATH"
+          export PATH="$HOME/Library/Python/3.14/bin:$PATH"
 
           CPUINFO_STUB="$RUNNER_TEMP/cpuinfo"
           printf '%s\n' \
@@ -268,12 +239,12 @@ jobs:
           if [[ -f build.ninja ]]; then
             ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
           else
-            echo "No build.ninja — cmake failed hard"
+            echo "No build.ninja"
             tail -80 "$GITHUB_WORKSPACE/fex-cmake.log" || true
             exit 1
           fi
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
-          find . -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \
+          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \) \
             | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
           ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
@@ -283,7 +254,7 @@ jobs:
         run: |
           mkdir -p host-libs
           {
-            echo "wine=${{ steps.wine_cfg.outcome }} gnutls=${{ steps.gnutls.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
+            echo "wine=${{ steps.wine_cfg.outcome }} ntdll=${{ steps.ntdll.outcome }} ws=${{ steps.wineserver.outcome }} win32u=${{ steps.win32u.outcome }} fex=${{ steps.fex.outcome }}"
             find host-libs -name '*.a' -exec ls -lh {} \;
             find host-libs -name '*.a' -exec file {} \;
           } | tee host-libs/MANIFEST.txt
@@ -296,7 +267,6 @@ jobs:
           path: |
             host-libs/
             wine-configure.log
-            gnutls-ios.log
             ntdll-unix.log
             wineserver.log
             win32u-unix.log
