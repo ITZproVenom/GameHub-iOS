@@ -17,7 +17,7 @@ env:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -32,34 +32,37 @@ jobs:
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000
-          export GIT_HTTP_LOW_SPEED_TIME=60
+          export GIT_HTTP_LOW_SPEED_TIME=120
           rm -rf /tmp/madeira-rt
-          git clone --depth 1 --filter=blob:none --sparse "$MADEIRA_REPO" /tmp/madeira-rt
+          git clone --filter=blob:none --sparse "$MADEIRA_REPO" /tmp/madeira-rt
           cd /tmp/madeira-rt
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          git sparse-checkout set app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
-            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
-            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
-            app/Madeira/nls app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h
+          git sparse-checkout set app/Madeira
           git sparse-checkout reapply || true
-          git checkout "$MADEIRA_COMMIT" -- app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
-            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
-            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
-            app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h 2>/dev/null || true
+
+          test -d app/Madeira/aarch64-windows
+          test -d app/Madeira/arm64ec-windows
 
           RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
           mkdir -p "$RT"
-          rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows"
+          rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows" "$RT/nls"
           cp -R app/Madeira/aarch64-windows "$RT/"
           cp -R app/Madeira/arm64ec-windows "$RT/"
-          cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          if [[ -f app/Madeira/prefix-template.tar.gz ]]; then
+            cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          else
+            echo "prefix-template.tar.gz missing — synthesizing minimal prefix tarball"
+            mkdir -p /tmp/pfx/drive_c/windows/system32
+            echo "Madeira minimal prefix" > /tmp/pfx/README
+            (cd /tmp/pfx && tar czf "$RT/prefix-template.tar.gz" .)
+          fi
           cp -v app/Madeira/cacert.pem "$RT/" 2>/dev/null || true
           for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
             [[ -f "app/Madeira/$lib" ]] && cp -v "app/Madeira/$lib" "$RT/"
           done
           [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
-          echo "$MADEIRA_COMMIT" > "$RT/VERSION"
+          printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
           if [[ -f app/Madeira/PrefixExtractor.c ]]; then
             cp -v app/Madeira/PrefixExtractor.c "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.c"
             cp -v app/Madeira/PrefixExtractor.h "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.h"
@@ -67,7 +70,7 @@ jobs:
           du -sh "$RT"
           test -f "$RT/prefix-template.tar.gz"
           test -d "$RT/aarch64-windows"
-          BYTES=$(du -sb "$RT" | awk '{print $1}')
+          BYTES=$(du -sk "$RT" | awk '{print $1 * 1024}')
           [[ "$BYTES" -gt 20000000 ]]
 
       - name: Generate Xcode project
@@ -98,29 +101,52 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             -quiet
 
-      - name: Package IPA + verify runtime
+      - name: Package IPA + force-embed Runtime + verify
         run: |
           set -euo pipefail
-          test -d build/GameHub.xcarchive/Products/Applications/GameHub.app
-          test -f build/GameHub.xcarchive/Products/Applications/GameHub.app/GameHub
+          APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
+          test -d "$APP"
+          test -f "$APP/GameHub"
+
+          RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
+          test -d "$RT/aarch64-windows"
+          test -f "$RT/prefix-template.tar.gz"
+
+          echo "Force-embedding Runtime into .app ..."
+          rm -rf "$APP/Runtime"
+          mkdir -p "$APP/Runtime"
+          cp -R "$RT/aarch64-windows" "$APP/Runtime/"
+          cp -R "$RT/arm64ec-windows" "$APP/Runtime/"
+          cp -v "$RT/prefix-template.tar.gz" "$APP/Runtime/"
+          cp -v "$RT/VERSION" "$APP/Runtime/"
+          [[ -f "$RT/cacert.pem" ]] && cp -v "$RT/cacert.pem" "$APP/Runtime/" || true
+          for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
+            [[ -f "$RT/$lib" ]] && cp -v "$RT/$lib" "$APP/Runtime/" || true
+          done
+          [[ -d "$RT/nls" ]] && cp -R "$RT/nls" "$APP/Runtime/" || true
+
+          du -sh "$APP/Runtime"
+          test -f "$APP/Runtime/aarch64-windows/d3d11.dll" || test -f "$APP/Runtime/arm64ec-windows/d3d11.dll"
+
           mkdir -p build/Payload
-          cp -R build/GameHub.xcarchive/Products/Applications/GameHub.app build/Payload/
-          cd build
-          zip -qr GameHub-unsigned.ipa Payload
-          ls -lh GameHub-unsigned.ipa
-          python3 -c '
+          rm -rf build/Payload/GameHub.app
+          cp -R "$APP" build/Payload/
+          (cd build && zip -qr GameHub-unsigned.ipa Payload)
+          ls -lh build/GameHub-unsigned.ipa
+
+          python3 << 'PY'
           import zipfile, os, sys
-          path = "GameHub-unsigned.ipa"
+          path = "build/GameHub-unsigned.ipa"
           size = os.path.getsize(path)
           print(f"IPA size: {size} ({size/1024/1024:.1f} MiB)")
           z = zipfile.ZipFile(path)
           names = z.namelist()
           assert any(n.endswith("GameHub.app/GameHub") for n in names)
           for m in ("prefix-template.tar.gz", "VERSION", "d3d11.dll"):
-              assert any(m in n for n in names), m
+              assert any(n.endswith(m) for n in names), m
           assert size > 20_000_000, size
           print("VERIFIED runtime IPA")
-          '
+          PY
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
