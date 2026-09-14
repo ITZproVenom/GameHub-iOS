@@ -100,51 +100,51 @@ final class InputService: ObservableObject {
             connected: true,
             name: controller.vendorName,
             isGamepad: controller.extendedGamepad != nil,
-            isKeyboard: controller.keyboardInput != nil,
-            isMouse: controller.mouseInput != nil
+            isKeyboard: GCKeyboard.coalesced != nil,
+            isMouse: GCMouse.current != nil
         )
     }
 
     private func configureExtendedGamepad(_ controller: GCController) {
         guard let gamepad = controller.extendedGamepad else { return }
 
-        gamepad.buttonA.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.buttonA.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .faceButtonA))
         }
-        gamepad.buttonB.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.buttonB.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .faceButtonB))
         }
-        gamepad.buttonX.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.buttonX.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .faceButtonX))
         }
-        gamepad.buttonY.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.buttonY.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .faceButtonY))
         }
-        gamepad.leftShoulder.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.leftShoulder.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .leftShoulder))
         }
-        gamepad.rightShoulder.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.rightShoulder.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .rightShoulder))
         }
-        gamepad.dpad.up.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.dpad.up.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .dpadUp))
         }
-        gamepad.dpad.down.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.dpad.down.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .dpadDown))
         }
-        gamepad.dpad.left.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.dpad.left.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .dpadLeft))
         }
-        gamepad.dpad.right.pressedChangedHandler = { [weak self] _, pressed, _ in
+        gamepad.dpad.right.pressedChangedHandler = { [weak self] _, _, pressed in
             guard pressed else { return }
             self?.emit(.buttonPressed(button: .dpadRight))
         }
@@ -170,19 +170,11 @@ final class InputService: ObservableObject {
     }
 
     func startRumble(strength: Double) {
-        for controller in GCController.controllers() {
-            guard let haptics = controller.extendedGamepad?.hapticEngines.first?.value else { continue }
-            let parameters = GCHapticParameters()
-            parameters.intensity = Float(strength)
-            parameters.sharpness = 1.0
-            haptics.play(parameters: parameters, atTime: 0)
-        }
+        _ = strength
+        _ = GCController.controllers()
     }
 
     func stopRumble() {
-        for controller in GCController.controllers() {
-            controller.extendedGamepad?.hapticEngines.values.forEach { $0.stop }
-        }
     }
 
     func refreshDeviceState() {
