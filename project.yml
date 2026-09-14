@@ -21,6 +21,7 @@ targets:
         excludes:
           - "**/*.md"
           - "Resources/Runtime/**"
+          - "Native/Madeira/HostLibs/**"
     resources:
       - path: GameHub/Resources/Runtime
         type: folder
@@ -52,17 +53,6 @@ targets:
           - -framework
           - UIKit
           - -lz
-          # Optional host static libs (present after madeira-host CI succeeds)
-          - -force_load
-          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libwineserver.a
-          - -force_load
-          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libntdll_unix.a
-          - -force_load
-          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libwin32u_unix.a
-          - -force_load
-          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libFEXCore.a
-          - -force_load
-          - $(SRCROOT)/GameHub/Native/Madeira/HostLibs/libdxmt_combined.a
     scheme:
       testTargets:
         - GameHubTests
