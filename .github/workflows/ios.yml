@@ -26,14 +26,15 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
-          python3 - <<'PY'
-from pathlib import Path
-import re
-p = Path("GameHub.xcodeproj/project.pbxproj")
-text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
-p.write_text(text)
-print("objectVersion fixed")
-PY
+          python3 -c '
+          from pathlib import Path
+          import re
+          p = Path("GameHub.xcodeproj/project.pbxproj")
+          text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
+          assert text.count("{") == text.count("}")
+          p.write_text(text)
+          print("objectVersion fixed")
+          '
 
       - name: Archive (unsigned)
         run: |
@@ -53,6 +54,8 @@ PY
       - name: Package IPA
         run: |
           set -euo pipefail
+          test -d build/GameHub.xcarchive/Products/Applications/GameHub.app
+          test -f build/GameHub.xcarchive/Products/Applications/GameHub.app/GameHub
           mkdir -p build/Payload
           cp -R build/GameHub.xcarchive/Products/Applications/GameHub.app build/Payload/
           cd build

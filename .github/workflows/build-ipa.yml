@@ -21,6 +21,20 @@ jobs:
       - name: Show Xcode
         run: xcodebuild -version
 
+      - name: Validate project.pbxproj syntax
+        run: |
+          set -euo pipefail
+          python3 -c '
+          from pathlib import Path
+          t = Path("GameHub.xcodeproj/project.pbxproj").read_text()
+          assert t.startswith("// !$*UTF8*$!")
+          assert t.rstrip().endswith("}")
+          assert t.count("{") == t.count("}")
+          assert "/* End PBXNativeTarget section */" in t
+          assert "rootObject" in t
+          print("pbxproj braces", t.count("{"), "lines", t.count("\n"))
+          '
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -28,14 +42,19 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate --spec project.yml
-          python3 - <<'PY'
-from pathlib import Path
-import re
-p = Path("GameHub.xcodeproj/project.pbxproj")
-text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
-p.write_text(text)
-print("project ready")
-PY
+          python3 -c '
+          from pathlib import Path
+          import re
+          p = Path("GameHub.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", text)
+          assert text.count("{") == text.count("}")
+          p.write_text(text)
+          print("xcodegen project ready", len(text), "bytes")
+          '
+
+      - name: List schemes
+        run: xcodebuild -list -project GameHub.xcodeproj
 
       - name: Archive unsigned
         run: |
@@ -56,20 +75,19 @@ PY
           set -euo pipefail
           APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
           test -d "$APP"
-          test -f "$APP/GameHub" || test -x "$APP/GameHub"
+          test -f "$APP/GameHub"
           mkdir -p build/Payload
           rm -rf build/Payload/GameHub.app
           cp -R "$APP" build/Payload/
-          # Ensure Runtime README ships in the bundle if XcodeGen included Resources
           (cd build && zip -qr GameHub.ipa Payload)
           ls -lh build/GameHub.ipa
-          python3 - <<'PY'
-import zipfile, sys
-z = zipfile.ZipFile("build/GameHub.ipa")
-names = z.namelist()
-assert any(n.endswith("GameHub.app/GameHub") or n == "Payload/GameHub.app/GameHub" for n in names), "missing exe"
-print("IPA entries", len(names))
-PY
+          python3 -c '
+          import zipfile
+          z = zipfile.ZipFile("build/GameHub.ipa")
+          names = z.namelist()
+          assert any(n.endswith("GameHub.app/GameHub") for n in names), names[:40]
+          print("IPA entries", len(names))
+          '
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -94,8 +112,7 @@ PY
             echo "Unsigned IPA — install with AltStore / Sideloadly / TrollStore."
             echo ""
             echo "### Runtime"
-            echo "Local Windows .exe launch requires Madeira binaries in the Runtime folder"
-            echo "(wine64, FEXInterpreter, dxmt11.dylib, VERSION). See Runtime README in the app."
+            echo "Local Windows .exe launch requires Madeira binaries in the Runtime folder."
             echo ""
             echo "### Commits"
             git log --max-count=12 --pretty=format:'- %s (%h)' --no-merges
