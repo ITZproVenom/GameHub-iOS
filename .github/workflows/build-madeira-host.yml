@@ -224,17 +224,15 @@ jobs:
 
           # Extra safety: make aarch64_fit_native.py always open the stub even if argv is wrong
           if [[ -f Scripts/aarch64_fit_native.py ]]; then
-            sed -i.bak2 's|with open(sys.argv\[1\]) as cpuinfo_file:|with open("$RUNNER_TEMP/fakeproc/cpuinfo") as cpuinfo_file:|' Scripts/aarch64_fit_native.py || true
-            # The above may not expand; force hardcode
-            python3 - <<'PY'
+            python3 -c "
 import pathlib
-p = pathlib.Path("Scripts/aarch64_fit_native.py")
+p = pathlib.Path('Scripts/aarch64_fit_native.py')
 t = p.read_text()
-t = t.replace("with open(sys.argv[1]) as cpuinfo_file:",
-              f"with open('{pathlib.Path('$RUNNER_TEMP') / 'fakeproc' / 'cpuinfo'}') as cpuinfo_file:")
+stub = pathlib.Path('$RUNNER_TEMP') / 'fakeproc' / 'cpuinfo'
+t = t.replace('with open(sys.argv[1]) as cpuinfo_file:', f'with open(\"{stub}\") as cpuinfo_file:')
 p.write_text(t)
-print("hard-patched aarch64_fit_native.py")
-PY
+print('hard-patched aarch64_fit_native.py to', stub)
+"
           fi
 
           git submodule update --init --depth 1 || true
