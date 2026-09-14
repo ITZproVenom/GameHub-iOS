@@ -5,7 +5,7 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let name = "Madeira"
     let description = "Wine ARM64EC + FEX-Emu x86-64 translation + DXMT D3D11→Metal"
     let projectURL = GameHubConstants.madeiraProjectURL
-    let pinnedCommit = GameHubConstants.madeiraPinnedCommit
+    let pinnedCommit: String? = GameHubConstants.madeiraPinnedCommit
 
     private let binaryDirectory: URL?
     private let installedVersion: String?
@@ -105,7 +105,7 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
                 + "Compile Madeira from \(projectURL) at commit \(pinnedCommit ?? "unknown").")
         }
 
-        if !await jitEntitlementEnabled() {
+        if !(await jitEntitlementEnabled()) {
             return .entitlementRequired(
                 "JIT compilation entitlement is required for x86-64 translation. "
                 + "The app must be built with the com.apple.security.cs.allow-jit entitlement "
