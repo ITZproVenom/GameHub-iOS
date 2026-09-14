@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
@@ -40,7 +41,6 @@ jobs:
           cd /tmp/madeira-rt
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          # Directory only — individual files cannot be sparse-set targets
           git sparse-checkout set app/Madeira
           git sparse-checkout reapply || true
 
@@ -52,11 +52,10 @@ jobs:
           rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows" "$RT/nls"
           cp -R app/Madeira/aarch64-windows "$RT/"
           cp -R app/Madeira/arm64ec-windows "$RT/"
-          # prefix-template may be gitignored / absent; build a minimal one if missing
           if [[ -f app/Madeira/prefix-template.tar.gz ]]; then
             cp -v app/Madeira/prefix-template.tar.gz "$RT/"
           else
-            echo "prefix-template.tar.gz missing in Madeira — synthesizing minimal prefix tarball"
+            echo "prefix-template.tar.gz missing — synthesizing minimal prefix tarball"
             mkdir -p /tmp/pfx/drive_c/windows/system32
             echo "Madeira minimal prefix" > /tmp/pfx/README
             (cd /tmp/pfx && tar czf "$RT/prefix-template.tar.gz" .)
@@ -68,11 +67,6 @@ jobs:
           [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
-          if [[ -f app/Madeira/PrefixExtractor.c ]]; then
-            cp -v app/Madeira/PrefixExtractor.c "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.c"
-            cp -v app/Madeira/PrefixExtractor.h "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.h"
-          fi
-
           echo "=== Runtime payload ==="
           du -sh "$RT"
           du -sh "$RT"/* 2>/dev/null | sort -h | tail -20
@@ -81,6 +75,26 @@ jobs:
           BYTES=$(du -sk "$RT" | awk '{print $1 * 1024}')
           echo "runtime_bytes=$BYTES"
           [[ "$BYTES" -gt 20000000 ]]
+
+      - name: Try restore host static libs artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
+          mkdir -p "$HL"
+          # Pull latest madeira-host-libs artifact if any (non-fatal)
+          gh run list --workflow=build-madeira-host.yml --status=success --limit 5 --json databaseId,conclusion 2>/dev/null | head -5 || true
+          RUN_ID=$(gh run list --workflow=build-madeira-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [[ -n "${RUN_ID:-}" ]]; then
+            echo "Downloading host-libs from run $RUN_ID"
+            mkdir -p /tmp/hl
+            gh run download "$RUN_ID" -n madeira-host-libs -D /tmp/hl 2>/dev/null || true
+            find /tmp/hl -name '*.a' -size +10k -exec cp -v {} "$HL/" \; || true
+            find /tmp/hl -path '*/fex/*.a' -size +10k -exec cp -v {} "$HL/" \; || true
+          fi
+          echo "=== HostLibs ==="
+          ls -lh "$HL" 2>/dev/null || echo "(empty)"
 
       - name: Generate Xcode project
         run: |
@@ -96,9 +110,17 @@ jobs:
           print("xcodegen ok", len(text))
           '
 
-      - name: Archive unsigned
+      - name: Archive unsigned (optional host libs)
         run: |
           set -euo pipefail
+          HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
+          EXTRA=()
+          for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libdxmt_combined.a; do
+            if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
+              EXTRA+=("-force_load" "$HL/$lib")
+              echo "Will force_load $lib"
+            fi
+          done
           xcodebuild archive \
             -project GameHub.xcodeproj \
             -scheme GameHub \
@@ -108,7 +130,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            COMPILER_INDEX_STORE_ENABLE=NO
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            "OTHER_LDFLAGS=${EXTRA[*]} -framework Metal -framework QuartzCore -framework UIKit -lz"
 
       - name: Package IPA + force-embed Runtime + verify
         run: |
@@ -121,8 +144,6 @@ jobs:
           test -d "$RT/aarch64-windows"
           test -f "$RT/prefix-template.tar.gz"
 
-          # CRITICAL: XcodeGen folder resource often skips large binary trees.
-          # Force-copy the full runtime into the app bundle before packaging.
           echo "Force-embedding Runtime into .app ..."
           rm -rf "$APP/Runtime"
           mkdir -p "$APP/Runtime"
@@ -138,7 +159,6 @@ jobs:
 
           echo "=== App Runtime after embed ==="
           du -sh "$APP/Runtime"
-          du -sh "$APP/Runtime"/* 2>/dev/null | sort -h | tail -15
           test -f "$APP/Runtime/aarch64-windows/d3d11.dll" || test -f "$APP/Runtime/arm64ec-windows/d3d11.dll"
           test -f "$APP/Runtime/prefix-template.tar.gz"
 
@@ -191,7 +211,8 @@ jobs:
             echo "**IPA size:** ${SIZE}"
             echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
             echo ""
-            echo "PE sysroots (aarch64-windows + arm64ec-windows) + prefix-template + VERSION + crypto archives."
+            echo "PE sysroots + prefix-template + real PrefixExtractor."
+            echo "Host static libs (wineserver/FEX/DXMT) linked when madeira-host CI produces them."
             echo "Unsigned — AltStore / Sideloadly / TrollStore + JIT debugger."
           } > release_notes.md
 
