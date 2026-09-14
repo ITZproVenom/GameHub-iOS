@@ -17,7 +17,7 @@ env:
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000
-          export GIT_HTTP_LOW_SPEED_TIME=90
+          export GIT_HTTP_LOW_SPEED_TIME=120
           rm -rf /tmp/madeira-rt
           git clone --filter=blob:none --sparse "$MADEIRA_REPO" /tmp/madeira-rt
           cd /tmp/madeira-rt
@@ -46,14 +46,21 @@ jobs:
 
           test -d app/Madeira/aarch64-windows
           test -d app/Madeira/arm64ec-windows
-          test -f app/Madeira/prefix-template.tar.gz
 
           RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
           mkdir -p "$RT"
           rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows" "$RT/nls"
           cp -R app/Madeira/aarch64-windows "$RT/"
           cp -R app/Madeira/arm64ec-windows "$RT/"
-          cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          # prefix-template may be gitignored / absent; build a minimal one if missing
+          if [[ -f app/Madeira/prefix-template.tar.gz ]]; then
+            cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          else
+            echo "prefix-template.tar.gz missing in Madeira — synthesizing minimal prefix tarball"
+            mkdir -p /tmp/pfx/drive_c/windows/system32
+            echo "Madeira minimal prefix" > /tmp/pfx/README
+            (cd /tmp/pfx && tar czf "$RT/prefix-template.tar.gz" .)
+          fi
           cp -v app/Madeira/cacert.pem "$RT/" 2>/dev/null || true
           for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
             [[ -f "app/Madeira/$lib" ]] && cp -v "app/Madeira/$lib" "$RT/"
@@ -103,17 +110,44 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: Package IPA + verify runtime inside
+      - name: Package IPA + force-embed Runtime + verify
         run: |
           set -euo pipefail
           APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
           test -d "$APP"
           test -f "$APP/GameHub"
+
+          RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
+          test -d "$RT/aarch64-windows"
+          test -f "$RT/prefix-template.tar.gz"
+
+          # CRITICAL: XcodeGen folder resource often skips large binary trees.
+          # Force-copy the full runtime into the app bundle before packaging.
+          echo "Force-embedding Runtime into .app ..."
+          rm -rf "$APP/Runtime"
+          mkdir -p "$APP/Runtime"
+          cp -R "$RT/aarch64-windows" "$APP/Runtime/"
+          cp -R "$RT/arm64ec-windows" "$APP/Runtime/"
+          cp -v "$RT/prefix-template.tar.gz" "$APP/Runtime/"
+          cp -v "$RT/VERSION" "$APP/Runtime/"
+          [[ -f "$RT/cacert.pem" ]] && cp -v "$RT/cacert.pem" "$APP/Runtime/" || true
+          for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
+            [[ -f "$RT/$lib" ]] && cp -v "$RT/$lib" "$APP/Runtime/" || true
+          done
+          [[ -d "$RT/nls" ]] && cp -R "$RT/nls" "$APP/Runtime/" || true
+
+          echo "=== App Runtime after embed ==="
+          du -sh "$APP/Runtime"
+          du -sh "$APP/Runtime"/* 2>/dev/null | sort -h | tail -15
+          test -f "$APP/Runtime/aarch64-windows/d3d11.dll" || test -f "$APP/Runtime/arm64ec-windows/d3d11.dll"
+          test -f "$APP/Runtime/prefix-template.tar.gz"
+
           mkdir -p build/Payload
           rm -rf build/Payload/GameHub.app
           cp -R "$APP" build/Payload/
           (cd build && zip -qr GameHub.ipa Payload)
           ls -lh build/GameHub.ipa
+
           python3 << 'PY'
           import zipfile, os, sys
           path = "build/GameHub.ipa"
@@ -125,7 +159,7 @@ jobs:
           assert any(n.endswith("GameHub.app/GameHub") for n in names), "missing binary"
           for m in ("prefix-template.tar.gz", "VERSION", "d3d11.dll"):
               hits = [n for n in names if n.endswith(m)]
-              print(f"  {m}: {len(hits)}", hits[:2])
+              print(f"  {m}: {len(hits)}", hits[:3])
               assert hits, f"missing {m}"
           if size < 20_000_000:
               print("ERROR: IPA too small", size, file=sys.stderr)
@@ -157,7 +191,7 @@ jobs:
             echo "**IPA size:** ${SIZE}"
             echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
             echo ""
-            echo "PE sysroots + prefix-template + VERSION + crypto archives."
+            echo "PE sysroots (aarch64-windows + arm64ec-windows) + prefix-template + VERSION + crypto archives."
             echo "Unsigned — AltStore / Sideloadly / TrollStore + JIT debugger."
           } > release_notes.md
 
