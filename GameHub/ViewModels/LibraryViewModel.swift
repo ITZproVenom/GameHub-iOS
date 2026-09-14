@@ -32,7 +32,7 @@ final class LibraryViewModel: ObservableObject {
         self.runtimeService = runtimeService
         self.storageService = storageService
         self.games = gameService.games
-        self.activeContainerIDs = Set(containerService.containers.map(\.id))
+        self.activeContainerIDs = Set(containerService.containers.map(\ .id))
     }
 
     var filteredGames: [Game] {
@@ -122,7 +122,7 @@ final class LibraryViewModel: ObservableObject {
             )
 
             switch result {
-            case .success:
+            case .success, .successLaunched:
                 gameService.recordPlay(gameID: game.id)
                 reloadData()
             case .runtimeNotInstalled:
