@@ -14,7 +14,7 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         self.forcedRoot = binaryDirectory
     }
 
-    private func layout() -> RuntimeBundleLayout? {
+    private func bundleLayout() -> RuntimeBundleLayout? {
         if let forcedRoot { return RuntimeBundleLayout(root: forcedRoot) }
         guard let root = RuntimeBundleLayout.firstExistingRoot() else { return nil }
         return RuntimeBundleLayout(root: root)
@@ -23,22 +23,22 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     func integrationReport() -> RuntimeIntegrationReport {
         // Host is the linked bridges, not PE alone.
         let hasSysroot: Bool = {
-            guard let layout else { return false }
-            return layout.missingMarkers().isEmpty && layout.missingPE().isEmpty
+            guard let bundle = bundleLayout() else { return false }
+            return bundle.missingMarkers().isEmpty && bundle.missingPE().isEmpty
         }()
-        let version = layout()?.readVersion() ?? "host"
+        let version = bundleLayout()?.readVersion() ?? "host"
         // Strong wine symbols override weak stubs; we only know at runtime.
         return .sysrootReady(version: version, missingHost: false)
     }
 
     func currentState() async -> RuntimeState {
         if MadeiraBootSequence.isJITReady() {
-            return .installed(version: layout()?.readVersion() ?? "jit-ready")
+            return .installed(version: bundleLayout()?.readVersion() ?? "jit-ready")
         }
         return .error(
             "JIT not enabled (CS_DEBUGGED). Attach StikDebug/StikJIT, then launch. "
             + "Wine host requires libwineserver.a + libntdll_unix.a from Madeira build "
-            + "(\(\projectURL) @ \(pinnedCommit ?? ""))."
+            + "(\(projectURL) @ \(pinnedCommit ?? ""))."
         )
     }
 
