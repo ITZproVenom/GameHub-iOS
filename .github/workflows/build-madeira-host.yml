@@ -13,6 +13,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+  LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-macos-universal.tar.xz
 
 jobs:
   host-libs:
@@ -21,16 +22,31 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install build deps
+      - name: Install build deps + llvm-mingw
         run: |
           set -euo pipefail
           brew install cmake ninja flex bison pkg-config wget python3 || true
-          # PEP 668: Homebrew Python is externally managed; force install for CI scripts
+          # PEP 668: Homebrew Python is externally managed
           python3 -m pip install --break-system-packages --user packaging setuptools || \
             pip3 install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+
+          # llvm-mingw provides aarch64-w64-mingw32-clang + lld for Wine PE configure
+          mkdir -p "$HOME/toolchains"
+          if [[ ! -x "$HOME/toolchains/llvm-mingw/bin/aarch64-w64-mingw32-clang" ]]; then
+            curl -L --retry 3 -o /tmp/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
+            tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchains"
+            # archive expands to llvm-mingw-*-ucrt-macos-universal
+            ln -sfn "$HOME/toolchains"/llvm-mingw-*-ucrt-macos-universal "$HOME/toolchains/llvm-mingw"
+            rm -f /tmp/llvm-mingw.tar.xz
+          fi
+          echo "$HOME/toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/toolchains/llvm-mingw/bin:$PATH"
+          aarch64-w64-mingw32-clang --version | head -1 || true
+          which llvm-dlltool || true
+
           echo "BISON=$(command -v bison)"; bison --version | head -1
           echo "FLEX=$(command -v flex)"; flex --version | head -1
           python3 -c "from packaging.version import Version; print('packaging OK', Version('1.0'))" || true
@@ -51,10 +67,11 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           export BISON="/opt/homebrew/opt/bison/bin/bison"
           export FLEX="/opt/homebrew/opt/flex/bin/flex"
           "$BISON" --version | head -1
+          which aarch64-w64-mingw32-clang
           cd madeira/wine
           mkdir -p build-macos && cd build-macos
           set +e
@@ -69,7 +86,7 @@ jobs:
             > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
           rc=$?
           set -e
-          tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          tail -60 "$GITHUB_WORKSPACE/wine-configure.log" || true
           if [[ $rc -ne 0 ]]; then
             echo "configure exit $rc"
             exit $rc
@@ -126,9 +143,24 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          # Ensure packaging is available for FEX Scripts/*.py
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           export PATH="$HOME/Library/Python/3.14/bin:$HOME/Library/Python/3.*/bin:$PATH"
+
+          # FEX Scripts/*.py open /proc/cpuinfo (Linux-only). Provide a minimal stub.
+          sudo mkdir -p /proc
+          if [[ ! -f /proc/cpuinfo ]]; then
+            cat <<'CPUINFO' | sudo tee /proc/cpuinfo >/dev/null
+processor       : 0
+BogoMIPS        : 48.00
+Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti
+CPU implementer : 0x61
+CPU architecture: 8
+CPU variant     : 0x0
+CPU part        : 0x000
+CPU revision    : 0
+CPUINFO
+          fi
+
           cd madeira/FEX
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -156,7 +188,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
           find . -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \
             | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
-          ls -lhR "$GITHUB_WORKSPACE/host-libs/fex"
+          ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
 
       - name: Manifest
