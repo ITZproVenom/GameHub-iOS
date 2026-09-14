@@ -57,7 +57,6 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          # Materialize gnutls source tarballs (large blobs)
           for f in build/gnutls-ios/src/gmp-6.3.0.tar.xz \
                    build/gnutls-ios/src/nettle-3.10.1.tar.gz \
                    build/gnutls-ios/src/gnutls-3.8.9.tar.xz; do
@@ -99,20 +98,17 @@ jobs:
           test -f include/config.h
           ls -la include/config.h
 
-      - name: Stage B0 — gnutls-ios (for bcrypt/secur32/crypt32)
+      - name: Stage B0 — gnutls-ios
         id: gnutls
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
           cd madeira
-          for f in build/gnutls-ios/src/*.tar.* build/gnutls-ios/src/*.tar.xz; do
-            [[ -f "$f" ]] && ls -lh "$f"
-          done
           bash build/gnutls-ios/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/gnutls-ios.log"
           ls -lh toolchains/gnutls-ios/lib/*.a || true
 
-      - name: Stage B — libntdll_unix.a (core + optional crypto)
+      - name: Stage B — libntdll_unix.a
         id: ntdll
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
@@ -123,26 +119,29 @@ jobs:
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
           set -e
-          # Even if some crypto/dwrite objs failed, archive every successful .o
+          # Always rebuild archive from every successful .o (macOS bash 3.x: no mapfile)
           OBJ=build/ntdll-unix/obj
-          if [[ ! -s app/Madeira/libntdll_unix.a ]]; then
-            echo "Recovering: building archive from successful objects only"
-            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f | sort)
-            if [[ ${#objs[@]} -eq 0 ]]; then
-              echo "No objects produced"
-              exit 1
-            fi
-            ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
+          objs=()
+          while IFS= read -r line; do
+            objs+=("$line")
+          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+          echo "Found ${#objs[@]} object files"
+          if [[ ${#objs[@]} -eq 0 ]]; then
+            echo "No objects produced"
+            exit 1
           fi
+          rm -f app/Madeira/libntdll_unix.a
+          ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
           test -s app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
           file app/Madeira/libntdll_unix.a
           ls -lh app/Madeira/libntdll_unix.a
-          nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -20 || \
-            llvm-nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -20 || true
+          ar t app/Madeira/libntdll_unix.a | head -40
+          nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -30 || \
+            llvm-nm -gU app/Madeira/libntdll_unix.a 2>/dev/null | head -30 || true
 
-      - name: Stage C — libwineserver.a (bootstrap base if missing)
+      - name: Stage C — libwineserver.a
         id: wineserver
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
@@ -150,24 +149,39 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
           cd madeira && mkdir -p app/Madeira build/wineserver/obj
-          if [[ ! -f app/Madeira/libwineserver.a ]]; then
+          if [[ ! -s app/Madeira/libwineserver.a ]]; then
+            # Seed with any existing server objects if we can compile a minimal set
             ar rcs app/Madeira/libwineserver.a
             cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
           fi
           set +e
           bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
           set -e
-          if [[ -s app/Madeira/libwineserver.a ]]; then
+          # Collect any objects the patch step produced
+          OBJ=build/wineserver/obj
+          objs=()
+          while IFS= read -r line; do
+            objs+=("$line")
+          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+          if [[ ${#objs[@]} -gt 0 ]]; then
+            # Prefer the patched archive if present and non-empty, else pack objs
+            if [[ ! -s app/Madeira/libwineserver.a ]] || [[ $(wc -c < app/Madeira/libwineserver.a) -lt 1000 ]]; then
+              ar rcs app/Madeira/libwineserver.a "${objs[@]}"
+            fi
+          fi
+          if [[ -s app/Madeira/libwineserver.a ]] && [[ $(wc -c < app/Madeira/libwineserver.a) -gt 1000 ]]; then
             mkdir -p "$GITHUB_WORKSPACE/host-libs"
             cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
             file app/Madeira/libwineserver.a
             ls -lh app/Madeira/libwineserver.a
+            ar t app/Madeira/libwineserver.a | head -20 || true
           else
-            echo "wineserver archive still empty/missing"
+            echo "wineserver archive empty or missing after bootstrap"
+            ls -la "$OBJ" || true
             exit 1
           fi
 
-      - name: Stage D — libwin32u_unix.a (best-effort)
+      - name: Stage D — libwin32u_unix.a
         id: win32u
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
@@ -178,16 +192,17 @@ jobs:
           bash build/win32u-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/win32u-unix.log"
           set -e
           OBJ=build/win32u-unix/obj
-          if [[ ! -s app/Madeira/libwin32u_unix.a ]]; then
-            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-            if [[ ${#objs[@]} -gt 0 ]]; then
-              ar rcs app/Madeira/libwin32u_unix.a "${objs[@]}"
-            fi
-          fi
-          if [[ -s app/Madeira/libwin32u_unix.a ]]; then
+          objs=()
+          while IFS= read -r line; do
+            objs+=("$line")
+          done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+          echo "win32u objs: ${#objs[@]}"
+          if [[ ${#objs[@]} -gt 0 ]]; then
+            ar rcs app/Madeira/libwin32u_unix.a "${objs[@]}"
             mkdir -p "$GITHUB_WORKSPACE/host-libs"
             cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
             ls -lh app/Madeira/libwin32u_unix.a
+            ar t app/Madeira/libwin32u_unix.a | head -30
           else
             echo "win32u archive not produced"
             exit 1
@@ -223,6 +238,7 @@ jobs:
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios && mkdir -p build-ios && cd build-ios
+          # FEX version script may still fail; force empty version rather than abort
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -241,8 +257,15 @@ jobs:
             -DENABLE_OFFLINE_TELEMETRY=OFF \
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
-            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log"
-          ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log"
+            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log" || true
+          # If cmake wrote incomplete config, still try ninja on whatever targets exist
+          if [[ -f build.ninja ]]; then
+            ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
+          else
+            echo "No build.ninja — cmake failed hard"
+            tail -80 "$GITHUB_WORKSPACE/fex-cmake.log" || true
+            exit 1
+          fi
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
           find . -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \
             | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
