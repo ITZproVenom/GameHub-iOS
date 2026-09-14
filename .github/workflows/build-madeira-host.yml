@@ -131,9 +131,12 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/toolchains/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira && mkdir -p app/Madeira build/wineserver/obj
+          # macOS ar rejects empty archives — seed with a tiny dummy object then let build.sh overwrite
           if [[ ! -s app/Madeira/libwineserver.a ]]; then
-            ar rcs app/Madeira/libwineserver.a
+            echo 'int madeira_wineserver_seed=0;' | clang -c -x c -o /tmp/ws_seed.o -
+            ar rcs app/Madeira/libwineserver.a /tmp/ws_seed.o
             cp app/Madeira/libwineserver.a build/wineserver/obj/libwineserver.a
+            rm -f /tmp/ws_seed.o
           fi
           set +e
           bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
@@ -143,10 +146,9 @@ jobs:
           while IFS= read -r line; do
             objs+=("$line")
           done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+          echo "wineserver objs: ${#objs[@]}"
           if [[ ${#objs[@]} -gt 0 ]]; then
-            if [[ ! -s app/Madeira/libwineserver.a ]] || [[ $(wc -c < app/Madeira/libwineserver.a) -lt 1000 ]]; then
-              ar rcs app/Madeira/libwineserver.a "${objs[@]}"
-            fi
+            ar rcs app/Madeira/libwineserver.a "${objs[@]}"
           fi
           if [[ -s app/Madeira/libwineserver.a ]] && [[ $(wc -c < app/Madeira/libwineserver.a) -gt 1000 ]]; then
             mkdir -p "$GITHUB_WORKSPACE/host-libs"
@@ -155,8 +157,9 @@ jobs:
             ls -lh app/Madeira/libwineserver.a
             ar t app/Madeira/libwineserver.a | head -20 || true
           else
-            echo "wineserver archive empty"
+            echo "wineserver archive empty or too small"
             ls -la "$OBJ" || true
+            cat "$GITHUB_WORKSPACE/wineserver.log" | tail -50 || true
             exit 1
           fi
 
@@ -206,13 +209,33 @@ jobs:
             'CPU part        : 0x000' \
             'CPU revision    : 0' > "$CPUINFO_STUB"
 
+          # Also create a fake /proc hierarchy that the script may open via argv
+          mkdir -p "$RUNNER_TEMP/fakeproc"
+          cp "$CPUINFO_STUB" "$RUNNER_TEMP/fakeproc/cpuinfo"
+
           cd madeira/FEX
-          find Scripts -name '*.py' -print0 | while IFS= read -r -d '' py; do
-            if grep -q '/proc/cpuinfo' "$py" 2>/dev/null; then
-              sed -i.bak "s|/proc/cpuinfo|$CPUINFO_STUB|g" "$py"
-              echo "patched $py"
+          # Patch every reference to /proc/cpuinfo in Scripts and CMake files
+          find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0 | while IFS= read -r -d '' f; do
+            if grep -q '/proc/cpuinfo' "$f" 2>/dev/null; then
+              sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f"
+              echo "patched $f"
             fi
           done
+
+          # Extra safety: make aarch64_fit_native.py always open the stub even if argv is wrong
+          if [[ -f Scripts/aarch64_fit_native.py ]]; then
+            sed -i.bak2 's|with open(sys.argv\[1\]) as cpuinfo_file:|with open("$RUNNER_TEMP/fakeproc/cpuinfo") as cpuinfo_file:|' Scripts/aarch64_fit_native.py || true
+            # The above may not expand; force hardcode
+            python3 - <<'PY'
+import pathlib
+p = pathlib.Path("Scripts/aarch64_fit_native.py")
+t = p.read_text()
+t = t.replace("with open(sys.argv[1]) as cpuinfo_file:",
+              f"with open('{pathlib.Path('$RUNNER_TEMP') / 'fakeproc' / 'cpuinfo'}') as cpuinfo_file:")
+p.write_text(t)
+print("hard-patched aarch64_fit_native.py")
+PY
+          fi
 
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -244,7 +267,7 @@ jobs:
             exit 1
           fi
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
-          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' \) \
+          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' -o -name 'libJemalloc*.a' \) \
             | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
           ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
