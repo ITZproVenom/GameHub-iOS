@@ -1,3 +1,4 @@
+// WineServerBridge.h - Run Wine's wineserver as a thread on iOS
 #pragma once
 
 #ifdef __cplusplus
