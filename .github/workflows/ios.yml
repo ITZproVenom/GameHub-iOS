@@ -30,11 +30,19 @@ jobs:
           xcodebuild -version
           xcode-select -p
 
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+
       - name: List available simulators
         run: xcrun simctl list devices available | head -40
-
-      - name: Resolve Swift package dependencies
-        run: xcodebuild -resolvePackageDependencies -project GameHub.xcodeproj -scheme GameHub
 
       - name: Build app for simulator (Debug, no signing)
         run: |
@@ -71,7 +79,6 @@ jobs:
             -derivedDataPath DerivedDataDevice \
             -archivePath DerivedDataDevice/GameHub.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
-            -allowProvisioningUpdates \
             archive
 
       - name: Package unsigned IPA

@@ -1,0 +1,47 @@
+name: GameHub
+options:
+  bundleIdPrefix: com.gamehub
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  GameHub:
+    type: application
+    platform: iOS
+    sources:
+      - path: GameHub
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gamehub.ios
+        PRODUCT_NAME: GameHub
+        INFOPLIST_FILE: GameHub/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: GameHub/Resources/GameHub.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: GameHub
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    scheme:
+      testTargets:
+        - GameHubTests
+  GameHubTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: GameHubTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gamehub.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/GameHub.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GameHub"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: GameHub
