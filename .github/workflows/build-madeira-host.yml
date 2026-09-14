@@ -1,9 +1,5 @@
 name: Build Madeira Host Libs
 
-# Produces real static host libraries from Madeira @ 97e2ce26.
-# Stage failures are expected until all toolchains succeed; artifacts + logs
-# show exactly what was built. Does not invent placeholder .a files.
-
 on:
   workflow_dispatch:
   push:
@@ -33,15 +29,18 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
           clang --version | head -2
-          sysctl -n hw.ncpu
 
       - name: Install build deps
         run: |
           set -euo pipefail
           brew install cmake ninja flex bison pkg-config wget || true
-          brew install llvm || true
+          echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          which bison; bison --version | head -1
+          which flex; flex --version | head -1
 
-      - name: Clone Madeira + submodules (shallow)
+      - name: Clone Madeira + submodules
         run: |
           set -euo pipefail
           rm -rf madeira
@@ -49,26 +48,18 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          # Wine + FEX are required for host libs; dxmt optional this pass
-          git submodule update --init --depth 1 wine FEX || {
-            echo "::warning::submodule init partial — retrying wine only"
-            git submodule update --init --depth 1 wine
-            git submodule update --init --depth 1 FEX || true
-          }
-          echo "wine head: $(git -C wine rev-parse --short HEAD 2>/dev/null || echo missing)"
-          echo "FEX head: $(git -C FEX rev-parse --short HEAD 2>/dev/null || echo missing)"
-          du -sh wine FEX 2>/dev/null || true
+          git submodule update --init --depth 1 wine FEX
+          echo "wine=$(git -C wine rev-parse --short HEAD) FEX=$(git -C FEX rev-parse --short HEAD)"
 
       - name: Stage A — Wine host configure (config.h)
         id: wine_cfg
         continue-on-error: true
         run: |
           set -euo pipefail
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          which bison; bison --version | head -1
           cd madeira/wine
-          mkdir -p build-macos
-          cd build-macos
-          # Minimal configure for headers used by ntdll-unix/build.sh
-          # Madeira expects include/config.h under wine/build-macos.
+          mkdir -p build-macos && cd build-macos
           ../configure \
             --enable-win64 \
             --without-x \
@@ -79,7 +70,6 @@ jobs:
             CFLAGS="-O2" \
             2>&1 | tee "$GITHUB_WORKSPACE/wine-configure.log"
           test -f include/config.h
-          echo "config.h present"
           ls -la include/config.h
 
       - name: Stage B — libntdll_unix.a
@@ -88,13 +78,15 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           mkdir -p app/Madeira
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
           test -f app/Madeira/libntdll_unix.a
-          ls -lh app/Madeira/libntdll_unix.a
           mkdir -p "$GITHUB_WORKSPACE/host-libs"
           cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
+          file app/Madeira/libntdll_unix.a || true
+          ls -lh app/Madeira/libntdll_unix.a
 
       - name: Stage C — libwineserver.a
         id: wineserver
@@ -102,20 +94,14 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/homebrew/opt/llvm/bin:$PATH"
           cd madeira
-          mkdir -p app/Madeira build/wineserver/obj
-          # build.sh expects a base archive or generates objects into obj/
-          bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log" || true
-          if [[ -f app/Madeira/libwineserver.a ]]; then
-            mkdir -p "$GITHUB_WORKSPACE/host-libs"
-            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
-            ls -lh app/Madeira/libwineserver.a
-          else
-            echo "::warning::libwineserver.a not produced"
-            # Collect any partial objects for diagnosis
-            find build/wineserver -name '*.a' -o -name '*.o' | head -40 || true
-            exit 1
-          fi
+          mkdir -p app/Madeira
+          bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
+          test -f app/Madeira/libwineserver.a
+          mkdir -p "$GITHUB_WORKSPACE/host-libs"
+          cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+          ls -lh app/Madeira/libwineserver.a
 
       - name: Stage D — libwin32u_unix.a
         id: win32u
@@ -123,14 +109,12 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           bash build/win32u-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/win32u-unix.log"
-          if [[ -f app/Madeira/libwin32u_unix.a ]]; then
-            mkdir -p "$GITHUB_WORKSPACE/host-libs"
-            cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
-          else
-            exit 1
-          fi
+          test -f app/Madeira/libwin32u_unix.a
+          mkdir -p "$GITHUB_WORKSPACE/host-libs"
+          cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
 
       - name: Stage E — FEX iOS static libs
         id: fex
@@ -139,32 +123,37 @@ jobs:
           set -euo pipefail
           test -d madeira/FEX
           cd madeira/FEX
-          # Init nested External deps if present
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          rm -rf build-ios
-          mkdir -p build-ios
-          cd build-ios
+          rm -rf build-ios && mkdir -p build-ios && cd build-ios
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_OSX_SYSROOT="$SDK" \
             -DBUILD_TESTS=OFF \
             -DBUILD_THUNKS=OFF \
             -DENABLE_LTO=OFF \
+            -DENABLE_JEMALLOC=OFF \
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log"
           ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log"
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex"
-          find . -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libJemallocLibs.a' -o -name 'libsoftfloat*.a' -o -name 'libcephes*.a' \
-            | while read -r f; do cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"; done
-          ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
+          find . -name '*.a' -print0 | while IFS= read -r -d '' f; do
+            case "$f" in
+              *libFEXCore*|*libfmt*|*libxxhash*|*libJemalloc*|*libsoftfloat*|*libcephes*)
+                cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
+                ;;
+            esac
+          done
+          ls -lh "$GITHUB_WORKSPACE/host-libs/fex" || true
           test -n "$(ls "$GITHUB_WORKSPACE/host-libs/fex"/*.a 2>/dev/null || true)"
 
-      - name: Summarize host-libs
+      - name: Summarize + verify non-empty archives
         if: always()
         run: |
           set -euo pipefail
@@ -177,7 +166,7 @@ jobs:
             echo "win32u=${{ steps.win32u.outcome }}"
             echo "fex=${{ steps.fex.outcome }}"
             echo "---"
-            find host-libs -type f -exec ls -lh {} \; 2>/dev/null || echo "(no host-libs yet)"
+            find host-libs -name '*.a' -exec ls -lh {} \;
           } | tee host-libs/MANIFEST.txt
 
       - name: Upload host-libs artifact
@@ -196,13 +185,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Fail job if zero libraries produced
+      - name: Require at least one real .a
         if: always()
         run: |
           set -euo pipefail
-          count=$(find host-libs -name '*.a' 2>/dev/null | wc -l | tr -d ' ')
-          echo "Produced .a count: $count"
+          count=$(find host-libs -name '*.a' -size +1k 2>/dev/null | wc -l | tr -d ' ')
+          echo "Non-trivial .a count: $count"
           if [[ "$count" -eq 0 ]]; then
-            echo "::error::No host .a libraries produced. See stage logs in the artifact."
+            echo "::error::No real host .a libraries produced"
             exit 1
           fi
