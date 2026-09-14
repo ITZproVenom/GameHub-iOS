@@ -7,7 +7,7 @@ struct RuntimeConfig: Codable, Hashable, Sendable {
     var mscvrtEnabled: Bool
 
     static let `default` = RuntimeConfig(
-        windowsVersion: .windows10,
+        windowsVersion: .win10,
         dxvkEnabled: true,
         dxmtEnabled: true,
         mscvrtEnabled: true

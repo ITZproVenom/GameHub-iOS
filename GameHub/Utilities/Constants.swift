@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum GameHubConstants {
     static let bundleID = "com.gamehub.ios"

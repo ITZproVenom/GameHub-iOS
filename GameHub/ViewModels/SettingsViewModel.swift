@@ -35,7 +35,9 @@ final class SettingsViewModel: ObservableObject {
 
     func selectProvider(_ providerID: String) {
         settings.runtimeProviderID = providerID
-        runtimeService.setActiveProvider(providerID)
+        Task {
+            await runtimeService.setActiveProvider(providerID)
+        }
     }
 
     func save() {

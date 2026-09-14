@@ -61,7 +61,9 @@ final class AppState: ObservableObject {
         let effective = saved ?? .default
         self.settings = effective
         try? storage.save(effective, to: "settings.json")
-        runtime.setActiveProvider(effective.runtimeProviderID)
+        Task {
+            await runtime.setActiveProvider(effective.runtimeProviderID)
+        }
 
         self.libraryViewModel = LibraryViewModel(
             gameService: games,
