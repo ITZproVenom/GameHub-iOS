@@ -1,0 +1,88 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Validate project parses
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project GameHub.xcodeproj
+          xcodebuild -project GameHub.xcodeproj -scheme GameHub -showBuildSettings -destination "generic/platform=iOS" >/tmp/settings.txt
+          grep -E "PRODUCT_NAME|PRODUCT_BUNDLE_IDENTIFIER|INFOPLIST_FILE" /tmp/settings.txt | head -20
+
+      - name: Archive for iOS device
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project GameHub.xcodeproj \
+            -scheme GameHub \
+            -configuration Release \
+            -archivePath "$PWD/build/GameHub.xcarchive" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Inspect archive
+        run: |
+          set -euo pipefail
+          APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          test -x "$APP/GameHub" || test -f "$APP/GameHub"
+          echo "Archive app payload:"
+          ls -la "$APP"
+          file "$APP/GameHub" || true
+          plutil -p "$APP/Info.plist" | head -40
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          mkdir -p build/Payload
+          rm -rf build/Payload/GameHub.app
+          cp -R build/GameHub.xcarchive/Products/Applications/GameHub.app build/Payload/
+          (
+            cd build
+            zip -qr GameHub.ipa Payload
+          )
+          test -f build/GameHub.ipa
+          python3 - <<'PY'
+          import zipfile, sys
+          z = zipfile.ZipFile("build/GameHub.ipa")
+          names = z.namelist()
+          print("IPA entries:", len(names))
+          app_entries = [n for n in names if n.startswith("Payload/GameHub.app/")]
+          if not app_entries:
+              sys.exit("IPA missing Payload/GameHub.app")
+          exe = [n for n in names if n == "Payload/GameHub.app/GameHub" or n.endswith("/GameHub.app/GameHub")]
+          if not exe:
+              sys.exit("IPA missing Mach-O executable GameHub")
+          print("IPA OK:", z.getinfo(exe[0]).file_size, "byte executable")
+          PY
+          ls -lh build/GameHub.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameHub-ipa
+          path: build/GameHub.ipa
+          if-no-files-found: error
