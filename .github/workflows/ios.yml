@@ -4,14 +4,20 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/workflows/build-madeira-host.yml"
 
 permissions:
   contents: write
 
+env:
+  MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
+  MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +27,48 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Fetch Madeira runtime PE + prefix (pinned)
+        run: |
+          set -euo pipefail
+          export GIT_HTTP_LOW_SPEED_LIMIT=1000
+          export GIT_HTTP_LOW_SPEED_TIME=60
+          rm -rf /tmp/madeira-rt
+          git clone --depth 1 --filter=blob:none --sparse "$MADEIRA_REPO" /tmp/madeira-rt
+          cd /tmp/madeira-rt
+          git fetch --depth 1 origin "$MADEIRA_COMMIT"
+          git checkout "$MADEIRA_COMMIT"
+          git sparse-checkout set app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
+            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
+            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
+            app/Madeira/nls app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h
+          git sparse-checkout reapply || true
+          git checkout "$MADEIRA_COMMIT" -- app/Madeira/aarch64-windows app/Madeira/arm64ec-windows \
+            app/Madeira/prefix-template.tar.gz app/Madeira/cacert.pem \
+            app/Madeira/libgmp.a app/Madeira/libgnutls.a app/Madeira/libhogweed.a app/Madeira/libnettle.a \
+            app/Madeira/PrefixExtractor.c app/Madeira/PrefixExtractor.h 2>/dev/null || true
+
+          RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
+          mkdir -p "$RT"
+          rm -rf "$RT/aarch64-windows" "$RT/arm64ec-windows"
+          cp -R app/Madeira/aarch64-windows "$RT/"
+          cp -R app/Madeira/arm64ec-windows "$RT/"
+          cp -v app/Madeira/prefix-template.tar.gz "$RT/"
+          cp -v app/Madeira/cacert.pem "$RT/" 2>/dev/null || true
+          for lib in libgmp.a libgnutls.a libhogweed.a libnettle.a; do
+            [[ -f "app/Madeira/$lib" ]] && cp -v "app/Madeira/$lib" "$RT/"
+          done
+          [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
+          echo "$MADEIRA_COMMIT" > "$RT/VERSION"
+          if [[ -f app/Madeira/PrefixExtractor.c ]]; then
+            cp -v app/Madeira/PrefixExtractor.c "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.c"
+            cp -v app/Madeira/PrefixExtractor.h "$GITHUB_WORKSPACE/GameHub/Native/Madeira/PrefixExtractor.h"
+          fi
+          du -sh "$RT"
+          test -f "$RT/prefix-template.tar.gz"
+          test -d "$RT/aarch64-windows"
+          BYTES=$(du -sb "$RT" | awk '{print $1}')
+          [[ "$BYTES" -gt 20000000 ]]
 
       - name: Generate Xcode project
         run: |
@@ -33,7 +81,6 @@ jobs:
           text = re.sub(r"objectVersion = \d+;", "objectVersion = 56;", p.read_text())
           assert text.count("{") == text.count("}")
           p.write_text(text)
-          print("objectVersion fixed")
           '
 
       - name: Archive (unsigned)
@@ -51,7 +98,7 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             -quiet
 
-      - name: Package IPA
+      - name: Package IPA + verify runtime
         run: |
           set -euo pipefail
           test -d build/GameHub.xcarchive/Products/Applications/GameHub.app
@@ -61,6 +108,19 @@ jobs:
           cd build
           zip -qr GameHub-unsigned.ipa Payload
           ls -lh GameHub-unsigned.ipa
+          python3 -c '
+          import zipfile, os, sys
+          path = "GameHub-unsigned.ipa"
+          size = os.path.getsize(path)
+          print(f"IPA size: {size} ({size/1024/1024:.1f} MiB)")
+          z = zipfile.ZipFile(path)
+          names = z.namelist()
+          assert any(n.endswith("GameHub.app/GameHub") for n in names)
+          for m in ("prefix-template.tar.gz", "VERSION", "d3d11.dll"):
+              assert any(m in n for n in names), m
+          assert size > 20_000_000, size
+          print("VERIFIED runtime IPA")
+          '
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
@@ -68,17 +128,18 @@ jobs:
           name: GameHub-unsigned-ipa
           path: build/GameHub-unsigned.ipa
           if-no-files-found: error
+          retention-days: 30
 
       - name: Publish release
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ios-build-${{ github.run_number }}-${{ github.sha }}
-          name: GameHub iOS build #${{ github.run_number }}
+          tag_name: ios-runtime-unsigned-${{ github.run_number }}-${{ github.sha }}
+          name: GameHub unsigned + Madeira runtime #${{ github.run_number }}
           prerelease: true
           body: |
-            Unsigned IPA from `${{ github.sha }}`.
-            Install with AltStore / Sideloadly / TrollStore.
+            Unsigned IPA with Madeira PE sysroots + prefix-template (${{ env.MADEIRA_COMMIT }}).
+            Install with AltStore / Sideloadly / TrollStore + JIT debugger.
           files: build/GameHub-unsigned.ipa
           fail_on_unmatched_files: true
         env:
