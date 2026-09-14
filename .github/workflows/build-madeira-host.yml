@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v8
+  CACHE_VERSION: v9
 
 jobs:
   host-libs:
@@ -25,18 +25,20 @@ jobs:
       - name: Install deps
         run: |
           set -euo pipefail
-          brew install cmake ninja flex bison pkg-config python3 coreutils || true
+          brew install cmake ninja flex bison pkg-config python3 coreutils llvm || true
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/llvm/bin" >> "$GITHUB_PATH"
 
       - name: Cache host libs
         uses: actions/cache@v4
         with:
           path: host-libs-cache
-          key: madeira-host-v8-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v9-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
+            madeira-host-v9-
             madeira-host-v8-
             madeira-host-v7-
             madeira-host-
@@ -86,7 +88,7 @@ jobs:
         id: ntdll
         if: steps.wine_cfg.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
@@ -94,11 +96,12 @@ jobs:
           mkdir -p app/Madeira "$GITHUB_WORKSPACE/host-libs"
           if [ -s "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" ]; then
             SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a")
-            if [ "$SZ" -gt 1200000 ]; then
+            if [ "$SZ" -gt 1500000 ]; then
               echo using-cached-ntdll size=$SZ
               cp -v "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" app/Madeira/
               exit 0
             fi
+            echo cached-ntdll-too-small size=$SZ forcing-rebuild
           fi
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
@@ -117,16 +120,20 @@ jobs:
             cp -v app/Madeira/libntdll_unix.a host-libs-cache/
             ls -lh app/Madeira/libntdll_unix.a
             ar t app/Madeira/libntdll_unix.a | wc -l
+            if [ -s app/Madeira/libwin32u_unix.a ]; then
+              cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
+              cp -v app/Madeira/libwin32u_unix.a host-libs-cache/
+            fi
           else
             echo ntdll-FAILED
-            tail -60 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
+            tail -80 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
             exit 1
           fi
 
       - name: Build FEX iOS
         id: fex
         continue-on-error: true
-        timeout-minutes: 40
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           python3 -m pip install --break-system-packages --user packaging setuptools || true
@@ -162,6 +169,8 @@ jobs:
             echo 'static uint64_t IosFfsBypassLog[8] = {};'
             echo 'static volatile uint64_t g_madeira_thr_count[16] = {};'
             echo 'static volatile uint64_t g_madeira_hot_count[64] = {};'
+            echo 'static volatile uint64_t g_madeira_syscall_count[32] = {};'
+            echo 'static volatile int g_madeira_ios_host = 1;'
             echo '#endif'
             echo '#ifdef __cplusplus'
             echo '}'
