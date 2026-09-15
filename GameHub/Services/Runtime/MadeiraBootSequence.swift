@@ -10,6 +10,7 @@ enum MadeiraBootSequence {
     enum Step: String {
         case jitCheck = "jit_check_debugged"
         case fexInit = "fex_initialize"
+        case dxmtInit = "dxmt_initialize"
         case prefixPrepare = "prefix_prepare"
         case wineserver = "wineserver_start"
         case wineProcess = "wine_process_start"
@@ -93,6 +94,15 @@ enum MadeiraBootSequence {
 
         if !fex_initialize() {
             NSLog("[GameHub] fex_initialize returned false (libFEXCore may be missing)")
+        }
+
+        if !dxmt_initialize() {
+            NSLog("[GameHub] dxmt_initialize returned false (no Metal device)")
+            return Outcome(
+                ok: false,
+                failedStep: .dxmtInit,
+                message: "dxmt_initialize failed: no Metal device on this host"
+            )
         }
 
         let prefix = ensurePrefix(preferredPrefix: prefixURL)
