@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v10b
+  CACHE_VERSION: v10c
 
 jobs:
   host-libs:
@@ -35,8 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: host-libs-cache
-          key: madeira-host-v10b-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v10c-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
+            madeira-host-v10c-
             madeira-host-v10b-
             madeira-host-v10-
             madeira-host-v9-
@@ -85,7 +86,7 @@ jobs:
             tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
           fi
           if [ ! -f include/config.h ]; then
-            echo "config.h missing — writing minimal stub with printf"
+            echo "config.h missing — writing minimal stub"
             mkdir -p include
             {
               printf '%s\n' '#ifndef WINE_CONFIG_H'
@@ -119,6 +120,7 @@ jobs:
 
       - name: Build libntdll_unix.a
         id: ntdll
+        continue-on-error: true
         timeout-minutes: 30
         run: |
           set -uo pipefail
@@ -137,13 +139,14 @@ jobs:
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
           BUILD_RC=${PIPESTATUS[0]}
-          set -e
+          set +e
           OBJ=build/ntdll-unix/obj
           if [ ! -s app/Madeira/libntdll_unix.a ] && [ -d "$OBJ" ]; then
-            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-            echo "ntdll-objs=${#objs[@]}"
-            if [ ${#objs[@]} -gt 3 ]; then
-              ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
+            # Portable (macOS bash 3.2 — no mapfile): ar all .o via find
+            NOBJ=$(find "$OBJ" -name '*.o' -type f 2>/dev/null | wc -l | tr -d ' ')
+            echo "ntdll-objs=$NOBJ"
+            if [ "$NOBJ" -gt 3 ]; then
+              find "$OBJ" -name '*.o' -type f -print0 | xargs -0 ar rcs app/Madeira/libntdll_unix.a
             fi
           fi
           if [ -s app/Madeira/libntdll_unix.a ]; then
@@ -152,14 +155,16 @@ jobs:
             ls -lh app/Madeira/libntdll_unix.a
             ar t app/Madeira/libntdll_unix.a | wc -l
             echo "ntdll_ok=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "ntdll-FAILED rc=$BUILD_RC"
-            tail -100 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
-            echo "ntdll_ok=0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "ntdll-FAILED rc=$BUILD_RC"
+          tail -100 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
+          echo "ntdll_ok=0" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Build libwineserver.a
         id: wineserver
+        continue-on-error: true
         timeout-minutes: 25
         run: |
           set -uo pipefail
@@ -180,9 +185,7 @@ jobs:
             fi
           fi
           if [ -f app/Madeira/libwineserver.a ] || [ -f "$OBJ/libwineserver.a" ]; then
-            set +e
-            bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
-            set -e
+            bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log" || true
           fi
           compile_ws() {
             local src=$1 name=$2
@@ -204,31 +207,31 @@ jobs:
               return 1
             fi
           }
-          set +e
-          compile_ws "$WS/main_ios.c" main_ios
-          compile_ws "$WS/wine_log_ios.c" wine_log_ios
-          compile_ws "$WS/wineserver_ios_kill.c" wineserver_ios_kill
-          compile_ws "$WS/unicode_ios_patch.c" unicode_ios_patch
-          compile_ws "$WS/request_ios.c" request_ios
-          compile_ws "$WS/mach_ios.c" mach_ios
-          compile_ws "$WS/unicode_ios.c" unicode_ios
-          set -e
-          mapfile -t wsobjs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-          echo "wineserver-objs=${#wsobjs[@]}"
-          if [ ${#wsobjs[@]} -gt 0 ]; then
-            ar rcs app/Madeira/libwineserver.a "${wsobjs[@]}"
+          compile_ws "$WS/main_ios.c" main_ios || true
+          compile_ws "$WS/wine_log_ios.c" wine_log_ios || true
+          compile_ws "$WS/wineserver_ios_kill.c" wineserver_ios_kill || true
+          compile_ws "$WS/unicode_ios_patch.c" unicode_ios_patch || true
+          compile_ws "$WS/request_ios.c" request_ios || true
+          compile_ws "$WS/mach_ios.c" mach_ios || true
+          compile_ws "$WS/unicode_ios.c" unicode_ios || true
+          NOBJ=$(find "$OBJ" -name '*.o' -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "wineserver-objs=$NOBJ"
+          if [ "$NOBJ" -gt 0 ]; then
+            find "$OBJ" -name '*.o' -type f -print0 | xargs -0 ar rcs app/Madeira/libwineserver.a
             cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
             cp -v app/Madeira/libwineserver.a host-libs-cache/
             ls -lh app/Madeira/libwineserver.a
             ar t app/Madeira/libwineserver.a | wc -l
             echo "wineserver_ok=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "wineserver-FAILED no objects"
-            echo "wineserver_ok=0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "wineserver-FAILED no objects"
+          echo "wineserver_ok=0" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Build FEXCore for iOS
         id: fex
+        continue-on-error: true
         timeout-minutes: 50
         run: |
           set -uo pipefail
@@ -290,7 +293,6 @@ jobs:
           rm -rf build-ios
           mkdir -p build-ios
           cd build-ios
-          set +e
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -310,17 +312,14 @@ jobs:
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             -DCMAKE_CXX_FLAGS="-include $GITHUB_WORKSPACE/madeira/FEX/FEXCore/include/IosCbEntryLog.h" \
-            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log"
-          set -e
+            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log" || true
           if [ ! -f build.ninja ]; then
             echo no-build-ninja
             tail -80 "$GITHUB_WORKSPACE/fex-cmake.log" || true
             echo "fex_ok=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          set +e
-          ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log"
-          set -e
+          ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex" host-libs-cache/fex
           find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' \) -size +10k | while read -r f; do
             cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
@@ -330,11 +329,12 @@ jobs:
             cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null || cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
             echo FEX-OK
             echo "fex_ok=1" >> "$GITHUB_OUTPUT"
-          else
-            echo FEX-MISSING
-            tail -60 "$GITHUB_WORKSPACE/fex-ninja.log" || true
-            echo "fex_ok=0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo FEX-MISSING
+          tail -60 "$GITHUB_WORKSPACE/fex-ninja.log" || true
+          echo "fex_ok=0" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Verify arm64 Mach-O + symbols
         if: always()
@@ -346,7 +346,7 @@ jobs:
           for lib in libntdll_unix.a libwineserver.a libFEXCore.a libdxmt_combined.a; do
             f="$OUT/$lib"
             if [ ! -s "$f" ]; then
-              f2=$(find "$OUT" -name "$lib" -o -name "${lib%.a}*.a" 2>/dev/null | head -1)
+              f2=$(find "$OUT" -name "$lib" 2>/dev/null | head -1)
               f="${f2:-$f}"
             fi
             if [ -s "$f" ]; then
