@@ -12,6 +12,7 @@ final class GameDetailViewModel: ObservableObject {
     @Published var artworkLoading = false
     @Published var isLaunching = false
     @Published var errorMessage: String?
+    @Published var jitReady: Bool = false
 
     private let gameService: GameService
     private let containerService: ContainerService
@@ -31,6 +32,7 @@ final class GameDetailViewModel: ObservableObject {
         self.runtimeService = runtimeService
         self.storageService = storageService
         self.container = containerService.container(for: game.id)
+        refreshJITStatus()
         Task { await refreshContainerStatus() }
         Task { loadArtwork() }
     }
@@ -47,6 +49,17 @@ final class GameDetailViewModel: ObservableObject {
         ByteCountFormatter.string(fromByteCount: game.executableSize, countStyle: .file)
     }
 
+    var jitStatusText: String {
+        if jitReady {
+            return "JIT ready — full FEX path available"
+        }
+        return "JIT not enabled — library & prefixes work; execution needs StikDebug / StikJIT"
+    }
+
+    func refreshJITStatus() {
+        jitReady = MadeiraBootSequence.isJITReady()
+    }
+
     func updateTitle(_ newTitle: String) {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != game.title else { return }
@@ -57,7 +70,10 @@ final class GameDetailViewModel: ObservableObject {
 
     func launch() async {
         isLaunching = true
+        errorMessage = nil
         defer { isLaunching = false }
+
+        refreshJITStatus()
 
         guard let container = containerService.container(for: game.id) else {
             errorMessage = "Create a container for this game before launching."
@@ -69,6 +85,8 @@ final class GameDetailViewModel: ObservableObject {
             return
         }
 
+        // NO-JIT: still call launch — provider returns entitlementRequired with clear text.
+        // We never claim success without a real running Wine process.
         let result = await runtimeService.launchGame(
             game: game,
             executableURL: game.executableURL,
@@ -81,10 +99,11 @@ final class GameDetailViewModel: ObservableObject {
             gameService.recordPlay(gameID: game.id)
             game.lastPlayed = Date()
         case .runtimeNotInstalled:
-            errorMessage = "The runtime is not installed. Install Madeira to launch Windows executables."
+            errorMessage = "The runtime is not installed."
         case .binaryMissing(let msg):
             errorMessage = msg
         case .entitlementRequired(let msg):
+            // Primary user-facing NO-JIT message
             errorMessage = msg
         case .unsupported(let msg):
             errorMessage = msg
