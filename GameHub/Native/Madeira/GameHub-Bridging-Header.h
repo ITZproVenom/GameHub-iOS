@@ -4,3 +4,4 @@
 #import "WineProcessBridge.h"
 #import "FEXBridge.h"
 #import "PrefixExtractor.h"
+#import "DXMTBridge.h"
