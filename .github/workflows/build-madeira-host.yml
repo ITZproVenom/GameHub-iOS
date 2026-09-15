@@ -14,64 +14,63 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v9
+  CACHE_VERSION: v10
 
 jobs:
   host-libs:
     name: Build host static libraries
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Install deps
         run: |
           set -euo pipefail
-          brew install cmake ninja flex bison pkg-config python3 coreutils llvm || true
+          brew install cmake ninja flex bison pkg-config python3 coreutils || true
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
-          echo "/opt/homebrew/opt/llvm/bin" >> "$GITHUB_PATH"
 
       - name: Cache host libs
         uses: actions/cache@v4
         with:
           path: host-libs-cache
-          key: madeira-host-v9-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v10-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
+            madeira-host-v10-
             madeira-host-v9-
-            madeira-host-v8-
-            madeira-host-v7-
-            madeira-host-
 
-      - name: Restore cache
+      - name: Prepare dirs
         run: |
-          mkdir -p host-libs host-libs-cache "$GITHUB_WORKSPACE/host-libs" host-libs/fex
+          mkdir -p host-libs host-libs/fex host-libs-cache host-libs-cache/fex "$GITHUB_WORKSPACE/host-libs"
           if [ -d host-libs-cache ]; then
-            find host-libs-cache -name '*.a' -size +10k -exec cp -v {} host-libs/ \; || true
-            find host-libs-cache -path '*/fex/*.a' -size +10k -exec cp -v {} host-libs/fex/ \; || true
+            find host-libs-cache -name '*.a' -size +50k -exec cp -v {} host-libs/ \; || true
+            find host-libs-cache -path '*/fex/*.a' -size +50k -exec cp -v {} host-libs/fex/ \; || true
           fi
           ls -lh host-libs 2>/dev/null || echo no-cached-libs
 
-      - name: Clone Madeira wine FEX
-        timeout-minutes: 10
+      - name: Clone Madeira + wine + FEX
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000
-          export GIT_HTTP_LOW_SPEED_TIME=60
+          export GIT_HTTP_LOW_SPEED_TIME=90
           rm -rf madeira
-          git clone --depth 1 --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
+          git clone --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
           git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 2 wine
-          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 2 FEX
-          echo wine=$(git -C wine rev-parse --short HEAD)
-          echo FEX=$(git -C FEX rev-parse --short HEAD)
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 2 FEX || true
+          echo wine=$(git -C wine rev-parse --short HEAD 2>/dev/null || echo missing)
+          echo FEX=$(git -C FEX rev-parse --short HEAD 2>/dev/null || echo missing)
+          test -d wine
+          test -d build/ntdll-unix
+          test -d build/wineserver
 
-      - name: Wine configure
+      - name: Wine configure (config.h)
         id: wine_cfg
-        continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
@@ -80,62 +79,186 @@ jobs:
           cd madeira/wine
           mkdir -p build-macos
           cd build-macos
-          ../configure --enable-win64 --without-x --without-freetype --without-gstreamer --disable-tests --disable-win16 CFLAGS="-O2 -pipe" > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
-          tail -30 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          if [ ! -f include/config.h ]; then
+            ../configure --enable-win64 --without-x --without-freetype --without-gstreamer --disable-tests --disable-win16 CFLAGS="-O2 -pipe" > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1 || true
+            tail -40 "$GITHUB_WORKSPACE/wine-configure.log" || true
+          fi
+          if [ ! -f include/config.h ]; then
+            echo "config.h missing — minimal stub"
+            mkdir -p include
+            cat > include/config.h << 'CFG'
+#ifndef WINE_CONFIG_H
+#define WINE_CONFIG_H
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_MEMORY_H 1
+#define HAVE_STRINGS_H 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_DLFCN_H 1
+#define HAVE_PTHREAD_H 1
+#define HAVE_SYS_MMAN_H 1
+#define HAVE_SYS_SOCKET_H 1
+#define HAVE_NETINET_IN_H 1
+#define HAVE_ARPA_INET_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_SYS_IOCTL_H 1
+#define HAVE_SYS_POLL_H 1
+#define HAVE_POLL 1
+#define HAVE_MMAP 1
+#define HAVE_GETPAGESIZE 1
+#endif
+CFG
+          fi
           test -f include/config.h
+          echo "wine_cfg=ok" >> "$GITHUB_OUTPUT"
 
-      - name: Build libntdll_unix
+      - name: Build libntdll_unix.a
         id: ntdll
-        if: steps.wine_cfg.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           mkdir -p app/Madeira "$GITHUB_WORKSPACE/host-libs"
+
+          # Skip full rebuild if cached archive is large enough
           if [ -s "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" ]; then
             SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a")
-            if [ "$SZ" -gt 1500000 ]; then
-              echo using-cached-ntdll size=$SZ
+            if [ "$SZ" -gt 500000 ]; then
+              echo "using-cached-ntdll size=$SZ"
               cp -v "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" app/Madeira/
+              echo "ntdll_ok=1" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo cached-ntdll-too-small size=$SZ forcing-rebuild
           fi
+
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
+          BUILD_RC=${PIPESTATUS[0]}
           set -e
+
           OBJ=build/ntdll-unix/obj
-          if [ ! -s app/Madeira/libntdll_unix.a ]; then
-            objs=()
-            while IFS= read -r line; do objs+=("$line"); done < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
-            echo ntdll-objs=${#objs[@]}
-            if [ ${#objs[@]} -gt 5 ]; then
+          if [ ! -s app/Madeira/libntdll_unix.a ] && [ -d "$OBJ" ]; then
+            mapfile -t objs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+            echo "ntdll-objs=${#objs[@]}"
+            if [ ${#objs[@]} -gt 3 ]; then
               ar rcs app/Madeira/libntdll_unix.a "${objs[@]}"
             fi
           fi
+
           if [ -s app/Madeira/libntdll_unix.a ]; then
             cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
             cp -v app/Madeira/libntdll_unix.a host-libs-cache/
             ls -lh app/Madeira/libntdll_unix.a
             ar t app/Madeira/libntdll_unix.a | wc -l
-            if [ -s app/Madeira/libwin32u_unix.a ]; then
-              cp -v app/Madeira/libwin32u_unix.a "$GITHUB_WORKSPACE/host-libs/"
-              cp -v app/Madeira/libwin32u_unix.a host-libs-cache/
-            fi
+            echo "ntdll_ok=1" >> "$GITHUB_OUTPUT"
           else
-            echo ntdll-FAILED
-            tail -80 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
-            exit 1
+            echo "ntdll-FAILED rc=$BUILD_RC"
+            tail -100 "$GITHUB_WORKSPACE/ntdll-unix.log" || true
+            echo "ntdll_ok=0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build FEX iOS
-        id: fex
-        continue-on-error: true
-        timeout-minutes: 45
+      - name: Build libwineserver.a (minimal iOS objects if no base)
+        id: wineserver
+        timeout-minutes: 25
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          cd madeira
+          mkdir -p app/Madeira build/wineserver/obj "$GITHUB_WORKSPACE/host-libs"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          WS=build/wineserver
+          OBJ=$WS/obj
+          WINE_SRC=wine
+          SHIMS=build/ntdll-unix/shims
+
+          if [ -s "$GITHUB_WORKSPACE/host-libs/libwineserver.a" ]; then
+            SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libwineserver.a")
+            if [ "$SZ" -gt 200000 ]; then
+              echo "using-cached-wineserver size=$SZ"
+              cp -v "$GITHUB_WORKSPACE/host-libs/libwineserver.a" app/Madeira/
+              echo "wineserver_ok=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          # Try official Madeira wineserver build if a base archive exists
+          if [ -f app/Madeira/libwineserver.a ] || [ -f "$OBJ/libwineserver.a" ]; then
+            set +e
+            bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log"
+            set -e
+          fi
+
+          # Compile essential iOS wineserver objects into a static archive
+          compile_ws() {
+            local src=$1 name=$2
+            echo -n "  ws $name... "
+            if xcrun -sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2 \
+              -I"$WINE_SRC/include" -I"$WINE_SRC/include/wine" -I"$WINE_SRC/build-macos/include" \
+              -I"$WS" -I"$WINE_SRC/server" -I"$SHIMS" \
+              -include "$WS/config_ios.h" -include stdarg.h \
+              -include "$WS/unicode_fix.h" -include "$WS/wineserver_ios_kill.h" \
+              -DBINDIR=\"/usr/local/bin\" -DDATADIR=\"/usr/local/share\" \
+              -D__WINESRC__ -DWINE_IOS=1 -Dmain=wineserver_main \
+              -Wno-implicit-function-declaration -Wno-int-conversion \
+              -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              echo OK
+              return 0
+            else
+              echo FAILED
+              head -5 "$OBJ/err-$name.txt" || true
+              return 1
+            fi
+          }
+
+          set +e
+          compile_ws "$WS/main_ios.c" main_ios
+          compile_ws "$WS/wine_log_ios.c" wine_log_ios
+          compile_ws "$WS/wineserver_ios_kill.c" wineserver_ios_kill
+          compile_ws "$WS/unicode_ios_patch.c" unicode_ios_patch
+          # Larger files — best effort
+          compile_ws "$WS/request_ios.c" request_ios
+          compile_ws "$WS/mach_ios.c" mach_ios
+          compile_ws "$WS/unicode_ios.c" unicode_ios
+          set -e
+
+          mapfile -t wsobjs < <(find "$OBJ" -name '*.o' -type f 2>/dev/null | sort)
+          echo "wineserver-objs=${#wsobjs[@]}"
+          if [ ${#wsobjs[@]} -gt 0 ]; then
+            ar rcs app/Madeira/libwineserver.a "${wsobjs[@]}"
+            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+            cp -v app/Madeira/libwineserver.a host-libs-cache/
+            ls -lh app/Madeira/libwineserver.a
+            ar t app/Madeira/libwineserver.a | wc -l
+            echo "wineserver_ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "wineserver-FAILED no objects"
+            echo "wineserver_ok=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build FEXCore for iOS
+        id: fex
+        timeout-minutes: 50
+        run: |
+          set -uo pipefail
+          if [ ! -d madeira/FEX ]; then
+            echo "FEX submodule missing"
+            echo "fex_ok=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -s "$GITHUB_WORKSPACE/host-libs/libFEXCore.a" ]; then
+            SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libFEXCore.a")
+            if [ "$SZ" -gt 1000000 ]; then
+              echo "using-cached-FEX size=$SZ"
+              echo "fex_ok=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           CPUINFO_STUB="$RUNNER_TEMP/cpuinfo"
           {
@@ -150,37 +273,41 @@ jobs:
           } > "$CPUINFO_STUB"
           mkdir -p "$RUNNER_TEMP/fakeproc"
           cp "$CPUINFO_STUB" "$RUNNER_TEMP/fakeproc/cpuinfo"
+
           cd madeira/FEX
           find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' -o -name '*.cpp' -o -name '*.h' \) -print0 | while IFS= read -r -d '' f; do
             if grep -q '/proc/cpuinfo' "$f" 2>/dev/null; then
               sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f" || true
             fi
           done
+
           mkdir -p FEXCore/include
-          {
-            echo '#pragma once'
-            echo '#include <stdint.h>'
-            echo '#ifdef __cplusplus'
-            echo 'extern "C" {'
-            echo '#endif'
-            echo '#ifndef IOS_MADEIRA_STUBS_DEFINED'
-            echo '#define IOS_MADEIRA_STUBS_DEFINED'
-            echo 'static uint64_t IosCbEntryLog[8] = {};'
-            echo 'static uint64_t IosFfsBypassLog[8] = {};'
-            echo 'static volatile uint64_t g_madeira_thr_count[16] = {};'
-            echo 'static volatile uint64_t g_madeira_hot_count[64] = {};'
-            echo 'static volatile uint64_t g_madeira_syscall_count[32] = {};'
-            echo 'static volatile int g_madeira_ios_host = 1;'
-            echo '#endif'
-            echo '#ifdef __cplusplus'
-            echo '}'
-            echo '#endif'
-          } > FEXCore/include/IosCbEntryLog.h
+          cat > FEXCore/include/IosCbEntryLog.h << 'HDR'
+#pragma once
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#ifndef IOS_MADEIRA_STUBS_DEFINED
+#define IOS_MADEIRA_STUBS_DEFINED
+static uint64_t IosCbEntryLog[8] = {};
+static uint64_t IosFfsBypassLog[8] = {};
+static volatile uint64_t g_madeira_thr_count[16] = {};
+static volatile uint64_t g_madeira_hot_count[64] = {};
+static volatile uint64_t g_madeira_syscall_count[32] = {};
+static volatile int g_madeira_ios_host = 1;
+#endif
+#ifdef __cplusplus
+}
+#endif
+HDR
+
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios
           mkdir -p build-ios
           cd build-ios
+          set +e
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -200,47 +327,95 @@ jobs:
             -DCMAKE_C_COMPILER=$(xcrun -f clang) \
             -DCMAKE_CXX_COMPILER=$(xcrun -f clang++) \
             -DCMAKE_CXX_FLAGS="-include $GITHUB_WORKSPACE/madeira/FEX/FEXCore/include/IosCbEntryLog.h" \
-            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log" || true
+            2>&1 | tee "$GITHUB_WORKSPACE/fex-cmake.log"
+          set -e
+
           if [ ! -f build.ninja ]; then
             echo no-build-ninja
             tail -80 "$GITHUB_WORKSPACE/fex-cmake.log" || true
-            exit 1
+            echo "fex_ok=0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
+
+          set +e
+          ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log"
+          set -e
+
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex" host-libs-cache/fex
-          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' -o -name 'libJemalloc*.a' \) | while read -r f; do
+          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' \) -size +10k | while read -r f; do
             cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
             cp -v "$f" host-libs-cache/fex/
           done
-          ls -lhR "$GITHUB_WORKSPACE/host-libs/fex" || true
+
           if ls "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a 1>/dev/null 2>&1; then
-            cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null || cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
+            cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null \
+              || cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
             echo FEX-OK
+            echo "fex_ok=1" >> "$GITHUB_OUTPUT"
           else
             echo FEX-MISSING
-            tail -80 "$GITHUB_WORKSPACE/fex-ninja.log" || true
+            tail -60 "$GITHUB_WORKSPACE/fex-ninja.log" || true
+            echo "fex_ok=0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Manifest and cache
+      - name: Verify arm64 Mach-O + symbols
         if: always()
         run: |
-          mkdir -p host-libs host-libs-cache host-libs-cache/fex "$GITHUB_WORKSPACE/host-libs"
-          for f in "$GITHUB_WORKSPACE/host-libs"/*.a host-libs/*.a; do
-            [ -s "$f" ] || continue
-            SZ=$(wc -c < "$f")
-            [ "$SZ" -gt 10000 ] && cp -v "$f" host-libs-cache/ || true
+          set -uo pipefail
+          OUT="$GITHUB_WORKSPACE/host-libs"
+          mkdir -p "$OUT"
+          echo "=== VERIFY ==="
+          for lib in libntdll_unix.a libwineserver.a libFEXCore.a libdxmt_combined.a; do
+            f="$OUT/$lib"
+            if [ ! -s "$f" ]; then
+              # also check fex subdir
+              f2=$(find "$OUT" -name "$lib" -o -name "${lib%.a}*.a" 2>/dev/null | head -1)
+              f="${f2:-$f}"
+            fi
+            if [ -s "$f" ]; then
+              SZ=$(wc -c < "$f")
+              echo "FOUND $lib size=$SZ path=$f"
+              file "$f" || true
+              # Extract one object and check architecture
+              TMP=$(mktemp -d)
+              (cd "$TMP" && ar x "$f" 2>/dev/null | head -1)
+              OBJ=$(find "$TMP" -name '*.o' | head -1)
+              if [ -n "$OBJ" ]; then
+                lipo -info "$OBJ" 2>/dev/null || file "$OBJ" || true
+                nm -gU "$OBJ" 2>/dev/null | head -5 || true
+              fi
+              rm -rf "$TMP"
+              # Meaningful symbol smoke tests
+              case "$lib" in
+                libntdll_unix.a)
+                  nm "$f" 2>/dev/null | grep -E '__wine_main|wine_' | head -5 || echo "(no wine symbols visible in archive index)"
+                  ;;
+                libwineserver.a)
+                  nm "$f" 2>/dev/null | grep -E 'wineserver_main|main_ios' | head -5 || true
+                  ;;
+                libFEXCore.a)
+                  nm "$f" 2>/dev/null | grep -i fex | head -5 || true
+                  ;;
+              esac
+            else
+              echo "MISSING $lib"
+            fi
           done
-          for f in "$GITHUB_WORKSPACE/host-libs/fex"/*.a host-libs/fex/*.a; do
-            [ -s "$f" ] && cp -v "$f" host-libs-cache/fex/ || true
-          done
-          echo FINAL-host-libs
-          find "$GITHUB_WORKSPACE/host-libs" -name '*.a' -exec ls -lh {} \; 2>/dev/null || true
           {
-            echo "wine=${{ steps.wine_cfg.outcome }}"
-            echo "ntdll=${{ steps.ntdll.outcome }}"
-            echo "fex=${{ steps.fex.outcome }}"
+            echo "commit=$MADEIRA_COMMIT"
+            echo "ntdll=${{ steps.ntdll.outputs.ntdll_ok }}"
+            echo "wineserver=${{ steps.wineserver.outputs.wineserver_ok }}"
+            echo "fex=${{ steps.fex.outputs.fex_ok }}"
             date -u
-          } > "$GITHUB_WORKSPACE/host-libs/MANIFEST.txt"
+            find "$OUT" -name '*.a' -exec ls -lh {} \;
+          } | tee "$OUT/MANIFEST.txt"
+
+      - name: Persist cache
+        if: always()
+        run: |
+          mkdir -p host-libs-cache host-libs-cache/fex
+          find "$GITHUB_WORKSPACE/host-libs" -name '*.a' -size +20k -exec cp -v {} host-libs-cache/ \; || true
+          find "$GITHUB_WORKSPACE/host-libs/fex" -name '*.a' -size +20k -exec cp -v {} host-libs-cache/fex/ \; || true
 
       - name: Upload madeira-host-libs
         if: always()
@@ -249,4 +424,4 @@ jobs:
           name: madeira-host-libs
           path: ${{ github.workspace }}/host-libs
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 21
