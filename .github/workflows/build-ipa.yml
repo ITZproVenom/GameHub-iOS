@@ -67,18 +67,29 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          # Keep GameHub WineProcessBridge / FEXBridge / HostWeakStubs — they carry
-          # imported-exe launch + iOS link stubs. Copy the rest of Madeira bridges.
-          for f in WineServerBridge.m IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
+          # Keep GameHub WineProcessBridge / FEXBridge / HostWeakStubs / JITAllocator
+          # (Madeira JITAllocator.h historically omits jit_get_write_offset).
+          for f in WineServerBridge.m IOSDisplayShim.m PrefixExtractor.c; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
-          for f in WineServerBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
+          for f in WineServerBridge.h IOSDisplayShim.h PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
+
+          # If Madeira's JITAllocator.c is larger and already exports jit_get_write_offset,
+          # use it; otherwise keep GameHub's iOS-compatible allocator.
+          if [[ -f app/Madeira/JITAllocator.c ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.c; then
+            cp -v app/Madeira/JITAllocator.c "$NAT/JITAllocator.c"
+            if [[ -f app/Madeira/JITAllocator.h ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.h; then
+              cp -v app/Madeira/JITAllocator.h "$NAT/JITAllocator.h"
+            fi
+          else
+            echo "Keeping GameHub JITAllocator (Madeira copy missing jit_get_write_offset)"
+          fi
 
           echo "=== Runtime payload ==="
           du -sh "$RT"
