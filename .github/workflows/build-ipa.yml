@@ -67,16 +67,18 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          for f in WineServerBridge.m WineProcessBridge.m FEXBridge.mm IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
+          # Copy bridges except FEXBridge.* (keep iOS-compatible stubs that do not require FEXCore headers)
+          for f in WineServerBridge.m WineProcessBridge.m IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
-          for f in WineServerBridge.h WineProcessBridge.h FEXBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
+          for f in WineServerBridge.h WineProcessBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
+          # Keep local FEXBridge.mm / FEXBridge.h (stub) — full Madeira version needs vendored FEX headers
 
           echo "=== Runtime payload ==="
           du -sh "$RT"
