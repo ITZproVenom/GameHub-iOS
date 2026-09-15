@@ -35,10 +35,10 @@ bool dxmt_initialize(void) {
                 [[device name] UTF8String] ?: "?");
     }
 
-    /* Presentation still proceeds through madeira_display_set_layer /
+    /* Presentation proceeds through madeira_display_set_layer /
      * winios_metal_layer_for_hwnd once Wine creates an HWND. */
-    g_dxmt_ready = true;
-    return true;
+    g_dxmt_ready = (probe != 0) || (device != nil);
+    return g_dxmt_ready;
 }
 
 void dxmt_shutdown(void) {

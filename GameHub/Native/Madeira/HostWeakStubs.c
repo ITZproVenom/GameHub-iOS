@@ -60,10 +60,4 @@ __attribute__((weak)) void winios_freeze_watch_start(void) {
     fprintf(stderr, "[GameHub] winios_freeze_watch_start: Winios.m not linked\n");
 }
 
-#ifdef __APPLE__
-/* Return type is CAMetalLayer* in ObjC; void* is ABI-compatible here. */
-__attribute__((weak)) void *winios_metal_layer_for_hwnd(void *hwnd) {
-    (void)hwnd;
-    return NULL;
-}
-#endif
+/* winios_metal_layer_for_hwnd is provided by IOSDisplayShim.m */

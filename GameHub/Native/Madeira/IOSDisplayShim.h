@@ -7,6 +7,9 @@
 #ifdef __OBJC__
 #import <QuartzCore/CAMetalLayer.h>
 void madeira_display_set_layer(CAMetalLayer *layer);
+CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd);
+#else
+void *winios_metal_layer_for_hwnd(void *hwnd);
 #endif
 
 #endif
