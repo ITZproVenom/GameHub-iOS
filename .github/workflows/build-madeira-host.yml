@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v10g
+  CACHE_VERSION: v10h
 
 jobs:
   host-libs:
@@ -46,9 +46,9 @@ jobs:
           path: |
             host-libs-cache
             ~/llvm-mingw
-          key: madeira-host-v10g-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v10h-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
-            madeira-host-v10g-
+            madeira-host-v10h-
             madeira-host-v10e-
 
       - name: Prepare dirs
@@ -274,6 +274,17 @@ jobs:
             printf '%s\n' '  DWORD Protect;'
             printf '%s\n' '  DWORD Type;'
             printf '%s\n' '} MEMORY_BASIC_INFORMATION, *PMEMORY_BASIC_INFORMATION;'
+            printf '%s\n' 'static inline SIZE_T VirtualQuery(LPCVOID addr, MEMORY_BASIC_INFORMATION *mbi, SIZE_T len) {'
+            printf '%s\n' '  if (!mbi || len < sizeof(*mbi)) return 0;'
+            printf '%s\n' '  mbi->BaseAddress = (PVOID)(uintptr_t)addr;'
+            printf '%s\n' '  mbi->AllocationBase = (PVOID)(uintptr_t)addr;'
+            printf '%s\n' '  mbi->AllocationProtect = PAGE_READWRITE;'
+            printf '%s\n' '  mbi->RegionSize = 4096;'
+            printf '%s\n' '  mbi->State = MEM_COMMIT;'
+            printf '%s\n' '  mbi->Protect = PAGE_READWRITE;'
+            printf '%s\n' '  mbi->Type = MEM_PRIVATE;'
+            printf '%s\n' '  return sizeof(*mbi);'
+            printf '%s\n' '}'
             printf '%s\n' '#endif'
             printf '%s\n' '#ifdef __cplusplus'
             printf '%s\n' '}'
@@ -302,13 +313,13 @@ jobs:
           fi
           ninja -j "$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/fex-ninja.log" || true
           mkdir -p "$GITHUB_WORKSPACE/host-libs/fex" host-libs-cache/fex
-          find . \( -name 'libFEXCore*.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' \) -size +10k | while read -r f; do
+          find . \( -name 'libFEXCore.a' -o -name 'libFEXCore_Base.a' -o -name 'libfmt.a' -o -name 'libxxhash.a' -o -name 'libcephes*.a' -o -name 'libsoftfloat*.a' \) -size +10k | while read -r f; do
             cp -v "$f" "$GITHUB_WORKSPACE/host-libs/fex/"
             cp -v "$f" host-libs-cache/fex/
           done
-          if ls "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a 1>/dev/null 2>&1; then
-            cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null || cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
-            ls -lh "$GITHUB_WORKSPACE/host-libs"/libFEXCore*.a
+          if [ -s "$GITHUB_WORKSPACE/host-libs/fex/libFEXCore.a" ]; then
+            cp -v "$GITHUB_WORKSPACE/host-libs/fex/libFEXCore.a" "$GITHUB_WORKSPACE/host-libs/"
+            ls -lh "$GITHUB_WORKSPACE/host-libs"/libFEXCore.a
             echo FEX-OK
             echo "fex_ok=1" >> "$GITHUB_OUTPUT"
             exit 0
