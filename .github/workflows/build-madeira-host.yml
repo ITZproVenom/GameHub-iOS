@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v10f
+  CACHE_VERSION: v10g
 
 jobs:
   host-libs:
@@ -46,9 +46,9 @@ jobs:
           path: |
             host-libs-cache
             ~/llvm-mingw
-          key: madeira-host-v10f-${{ env.MADEIRA_COMMIT }}
+          key: madeira-host-v10g-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
-            madeira-host-v10f-
+            madeira-host-v10g-
             madeira-host-v10e-
 
       - name: Prepare dirs
@@ -127,7 +127,8 @@ jobs:
             [ "$NOBJ" -gt 3 ] && find "$OBJ" -name '*.o' -type f -print0 | xargs -0 ar rcs app/Madeira/libntdll_unix.a
           fi
           if [ -s app/Madeira/libntdll_unix.a ]; then
-            cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/" host-libs-cache/
+            cp -v app/Madeira/libntdll_unix.a "$GITHUB_WORKSPACE/host-libs/"
+            cp -v app/Madeira/libntdll_unix.a host-libs-cache/
             ls -lh app/Madeira/libntdll_unix.a
             echo "ntdll_ok=1" >> "$GITHUB_OUTPUT"
             exit 0
@@ -188,7 +189,8 @@ jobs:
           echo "wineserver-objs=$NOBJ"
           if [ "$NOBJ" -gt 0 ]; then
             find "$OBJ" -name '*.o' -type f -print0 | xargs -0 ar rcs app/Madeira/libwineserver.a
-            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/" host-libs-cache/
+            cp -v app/Madeira/libwineserver.a "$GITHUB_WORKSPACE/host-libs/"
+            cp -v app/Madeira/libwineserver.a host-libs-cache/
             ls -lh app/Madeira/libwineserver.a
             echo "wineserver_ok=1" >> "$GITHUB_OUTPUT"
             exit 0
@@ -203,14 +205,13 @@ jobs:
         run: |
           set -uo pipefail
           if [ ! -d madeira/FEX ]; then echo "fex_ok=0" >> "$GITHUB_OUTPUT"; exit 0; fi
-          # Always rebuild FEX this revision (prior caches lacked Core)
           rm -f "$GITHUB_WORKSPACE/host-libs"/libFEXCore*.a host-libs/fex/libFEXCore*.a 2>/dev/null || true
           python3 -m pip install --break-system-packages --user packaging setuptools || true
           CPUINFO_STUB="$RUNNER_TEMP/cpuinfo"
           {
             echo 'processor       : 0'
             echo 'BogoMIPS        : 48.00'
-            echo 'Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp sve2'
+            echo 'Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve'
             echo 'CPU implementer : 0x61'
             echo 'CPU architecture: 8'
             echo 'CPU variant     : 0x0'
@@ -222,7 +223,6 @@ jobs:
           find . -type f \( -name '*.py' -o -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.in' -o -name '*.cpp' -o -name '*.h' \) -print0 | while IFS= read -r -d '' f; do
             grep -q '/proc/cpuinfo' "$f" 2>/dev/null && sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f" || true
           done
-          # Force-include: Ios logs + minimal Win32 types used by Madeira Arm64.cpp (VirtualQuery path)
           mkdir -p FEXCore/include
           {
             printf '%s\n' '#pragma once'
@@ -279,14 +279,6 @@ jobs:
             printf '%s\n' '}'
             printf '%s\n' '#endif'
           } > FEXCore/include/IosCbEntryLog.h
-          # Also patch Arm64.cpp to include header if force-include misses somehow
-          if [ -f FEXCore/Source/Utils/ArchHelpers/Arm64.cpp ]; then
-            if ! grep -q 'IOS_WIN32_MEM_STUBS' FEXCore/Source/Utils/ArchHelpers/Arm64.cpp; then
-              sed -i.bak '1i\
-#include <FEXCore/include/IosCbEntryLog.h>
-' FEXCore/Source/Utils/ArchHelpers/Arm64.cpp || true
-            fi
-          fi
           git submodule update --init --depth 1 || true
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           rm -rf build-ios && mkdir -p build-ios && cd build-ios
@@ -315,8 +307,7 @@ jobs:
             cp -v "$f" host-libs-cache/fex/
           done
           if ls "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a 1>/dev/null 2>&1; then
-            cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null || \
-              cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
+            cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore.a "$GITHUB_WORKSPACE/host-libs/" 2>/dev/null || cp -v "$GITHUB_WORKSPACE/host-libs/fex"/libFEXCore*.a "$GITHUB_WORKSPACE/host-libs/" || true
             ls -lh "$GITHUB_WORKSPACE/host-libs"/libFEXCore*.a
             echo FEX-OK
             echo "fex_ok=1" >> "$GITHUB_OUTPUT"
