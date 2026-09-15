@@ -32,6 +32,7 @@ final class ContainerService: ObservableObject {
 
     init(storage: StorageService) {
         self.storage = storage
+        loadContainers()
     }
 
     // MARK: - Container Management
@@ -42,7 +43,7 @@ final class ContainerService: ObservableObject {
         }
 
         let containerID = UUID()
-        var prefixLocation: URL
+        let prefixLocation: URL
 
         do {
             prefixLocation = try storage.containerDirectory(for: containerID)
@@ -51,6 +52,9 @@ final class ContainerService: ObservableObject {
         } catch {
             throw ContainerError.createFailed(error.localizedDescription)
         }
+
+        // Seed the Wine prefix from the bundled template (PE sysroots + registry)
+        seedPrefixIfNeeded(at: prefixLocation)
 
         var container = Container(
             id: containerID,
@@ -69,6 +73,50 @@ final class ContainerService: ObservableObject {
         return container
     }
 
+    /// Extract Runtime/prefix-template.tar.gz into the container prefix directory.
+    private func seedPrefixIfNeeded(at prefixLocation: URL) {
+        let stamp = prefixLocation.appendingPathComponent(".update-timestamp")
+        if fileManager.fileExists(atPath: stamp.path) {
+            return
+        }
+
+        // Prefer force-embedded Runtime/ inside the .app
+        let candidates: [URL?] = [
+            Bundle.main.url(forResource: "prefix-template", withExtension: "tar.gz", subdirectory: "Runtime"),
+            Bundle.main.resourceURL?.appendingPathComponent("Runtime/prefix-template.tar.gz"),
+            Bundle.main.url(forResource: "prefix-template", withExtension: "tar.gz"),
+        ]
+
+        guard let tgz = candidates.compactMap({ $0 }).first(where: {
+            fileManager.fileExists(atPath: $0.path)
+        }) else {
+            // Create minimal skeleton so the directory is usable
+            try? fileManager.createDirectory(
+                at: prefixLocation.appendingPathComponent("drive_c", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            return
+        }
+
+        let rc = madeira_extract_prefix_tgz(tgz.path, prefixLocation.path)
+        if rc == 0 {
+            try? "seeded".write(to: stamp, atomically: true, encoding: .utf8)
+        } else {
+            // Still create drive_c so launch path has somewhere to work
+            try? fileManager.createDirectory(
+                at: prefixLocation.appendingPathComponent("drive_c", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+
+        // dosdevices/c: -> ../drive_c
+        let dosdev = prefixLocation.appendingPathComponent("dosdevices", isDirectory: true)
+        try? fileManager.createDirectory(at: dosdev, withIntermediateDirectories: true)
+        let cLink = dosdev.appendingPathComponent("c:")
+        try? fileManager.removeItem(at: cLink)
+        try? fileManager.createSymbolicLink(at: cLink, withDestinationURL: URL(fileURLWithPath: "../drive_c"))
+    }
+
     func loadContainer(withID id: UUID) -> Container? {
         containers.first { $0.id == id }
     }
@@ -83,8 +131,7 @@ final class ContainerService: ObservableObject {
         }
 
         let container = containers[index]
-
-        try fileManager.removeItem(at: container.prefixLocation)
+        try? fileManager.removeItem(at: container.prefixLocation)
 
         containers.remove(at: index)
         save()
@@ -99,8 +146,9 @@ final class ContainerService: ObservableObject {
         container.status = .resetting
         containers[index] = container
 
-        try fileManager.removeItem(at: container.prefixLocation)
+        try? fileManager.removeItem(at: container.prefixLocation)
         try fileManager.createDirectory(at: container.prefixLocation, withIntermediateDirectories: true)
+        seedPrefixIfNeeded(at: container.prefixLocation)
 
         container.status = .ready
         container.lastError = nil
@@ -120,11 +168,8 @@ final class ContainerService: ObservableObject {
             return .notCreated
         }
 
-        let configExists = fileManager.fileExists(
-            atPath: prefixPath.appendingPathComponent("user.reg").path
-        )
-
-        let status: ContainerStatus = configExists ? .ready : .creating
+        let driveC = prefixPath.appendingPathComponent("drive_c")
+        let status: ContainerStatus = fileManager.fileExists(atPath: driveC.path) ? .ready : .creating
         updateContainer(container.with(status: status, lastError: nil))
         return status
     }
@@ -158,6 +203,12 @@ private extension Container {
         var copy = self
         copy.status = newStatus
         copy.lastError = newLastError
+        return copy
+    }
+
+    func with(modifiedAt date: Date) -> Container {
+        var copy = self
+        copy.modifiedDate = date
         return copy
     }
 }
