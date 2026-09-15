@@ -2,6 +2,9 @@ name: Build IPA
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Build DXMT Host Lib", "Build Madeira Host Libs"]
+    types: [completed]
   push:
     branches: [main]
     paths-ignore:
@@ -67,8 +70,6 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          # Keep GameHub WineProcessBridge / FEXBridge / HostWeakStubs / JITAllocator
-          # (Madeira JITAllocator.h historically omits jit_get_write_offset).
           for f in WineServerBridge.m IOSDisplayShim.m PrefixExtractor.c; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
@@ -80,8 +81,6 @@ jobs:
             fi
           done
 
-          # If Madeira's JITAllocator.c is larger and already exports jit_get_write_offset,
-          # use it; otherwise keep GameHub's iOS-compatible allocator.
           if [[ -f app/Madeira/JITAllocator.c ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.c; then
             cp -v app/Madeira/JITAllocator.c "$NAT/JITAllocator.c"
             if [[ -f app/Madeira/JITAllocator.h ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.h; then
@@ -110,11 +109,22 @@ jobs:
             RUN_ID=$(gh run list --workflow=build-madeira-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
           fi
           if [[ -n "${RUN_ID:-}" ]]; then
-            echo "Downloading host-libs from run $RUN_ID"
+            echo "Downloading host-libs from Madeira Host run $RUN_ID"
             mkdir -p /tmp/hl
             gh run download "$RUN_ID" -n madeira-host-libs -D /tmp/hl 2>/dev/null || true
-            find /tmp/hl -name '*.a' -size +10k -exec cp -v {} "$HL/" \; || true
-            find /tmp/hl -path '*/fex/*.a' -size +10k -exec cp -v {} "$HL/" \; || true
+            find /tmp/hl -name '*.a' -size +200c -exec cp -v {} "$HL/" \; || true
+            find /tmp/hl -path '*/fex/*.a' -size +200c -exec cp -v {} "$HL/" \; || true
+          fi
+          DXMT_RUN=$(gh run list --workflow="Build DXMT Host Lib" --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [[ -z "${DXMT_RUN:-}" ]]; then
+            DXMT_RUN=$(gh run list --workflow=build-dxmt-host.yml --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          fi
+          if [[ -n "${DXMT_RUN:-}" ]]; then
+            echo "Downloading DXMT host-libs from run $DXMT_RUN"
+            mkdir -p /tmp/dxmt-hl
+            gh run download "$DXMT_RUN" -n madeira-host-libs -D /tmp/dxmt-hl 2>/dev/null || true
+            find /tmp/dxmt-hl -name 'libdxmt_combined.a' -size +200c -exec cp -v {} "$HL/" \; || true
+            find /tmp/dxmt-hl -name '*.a' -size +200c -exec cp -v {} "$HL/" \; || true
           fi
           echo "=== HostLibs ==="
           ls -lh "$HL" 2>/dev/null || echo "(empty)"
@@ -166,7 +176,11 @@ jobs:
           FULL=""
           NOFEX=""
           for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a libsoftfloat_3e.a libcephes_128bit.a; do
-            if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
+            MIN=50000
+            case "$lib" in
+              libdxmt_combined.a) MIN=200 ;;
+            esac
+            if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt $MIN ]]; then
               FULL="$FULL -force_load $HL/$lib"
               case "$lib" in
                 libFEXCore*) ;;
