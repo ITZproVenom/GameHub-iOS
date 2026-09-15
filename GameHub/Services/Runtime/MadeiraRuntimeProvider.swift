@@ -1,6 +1,8 @@
 import Foundation
 
 /// Madeira-style host: in-process wineserver + wine_process after JIT.
+/// Without JIT the provider still reports status and allows prefix/library work;
+/// launch refuses with a clear entitlement message.
 final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     let id = "madeira"
     let name = "Madeira"
@@ -21,22 +23,20 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     func integrationReport() -> RuntimeIntegrationReport {
-        let hasSysroot: Bool = {
-            guard let bundle = bundleLayout() else { return false }
-            return bundle.missingMarkers().isEmpty && bundle.missingPE().isEmpty
-        }()
         let version = bundleLayout()?.readVersion() ?? "host"
         return .sysrootReady(version: version, missingHost: false)
     }
 
     func currentState() async -> RuntimeState {
+        let version = bundleLayout()?.readVersion() ?? "runtime"
         if MadeiraBootSequence.isJITReady() {
-            return .installed(version: bundleLayout()?.readVersion() ?? "jit-ready")
+            return .installed(version: "\(version) · JIT ready")
         }
+        // App remains usable; only execution is blocked.
         return .error(
-            "JIT not enabled (CS_DEBUGGED). Attach StikDebug/StikJIT, then launch. "
-            + "Wine host requires libwineserver.a + libntdll_unix.a from Madeira build "
-            + "(\(projectURL) @ \(pinnedCommit ?? ""))."
+            "JIT required for x86-64 execution. "
+            + "Attach StikDebug / StikJIT / TrollStore, then relaunch. "
+            + "Library, import, and prefixes still work."
         )
     }
 
@@ -46,7 +46,12 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     func isCapabilityAvailable(_ capability: RuntimeCapability) async -> Bool {
-        capability == .jitCompilation ? MadeiraBootSequence.isJITReady() : true
+        switch capability {
+        case .jitCompilation, .x86Translation, .wineExecution:
+            return MadeiraBootSequence.isJITReady()
+        default:
+            return true
+        }
     }
 
     func launch(
@@ -60,8 +65,8 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         _ = environment
         _ = config
 
-        // Place the selected .exe into the game's Wine prefix and boot
-        // wineserver → wine_process. Metal layer must already be registered by UI.
+        // Primary path: full FEX JIT when available.
+        // NO-JIT: MadeiraBootSequence returns entitlementRequired — never fake success.
         let outcome = MadeiraBootSequence.runFullSequence(
             prefixURL: prefixURL,
             executableURL: executableURL
@@ -89,11 +94,15 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         var reports: [RuntimeStatus.RuntimeCapabilityReport] = []
         for cap in capabilities {
             let available = await isCapabilityAvailable(cap)
-            reports.append(.init(
-                capability: cap,
-                available: available,
-                reason: available ? nil : "JIT or Madeira static host missing"
-            ))
+            let reason: String?
+            if available {
+                reason = nil
+            } else if cap == .jitCompilation || cap == .x86Translation || cap == .wineExecution {
+                reason = "Requires JIT debugger (StikDebug / StikJIT / TrollStore)"
+            } else {
+                reason = "Unavailable"
+            }
+            reports.append(.init(capability: cap, available: available, reason: reason))
         }
         return RuntimeStatus(
             id: id,
