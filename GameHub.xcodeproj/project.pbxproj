@@ -7,89 +7,546 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		EEB642BE58E5D64222F7FE6B /* GameHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FDFEC464992392C2540ADD5 /* GameHubApp.swift */; };
-		10D8E0FCF7D105E961C0E85A /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FE4FF8DBD41FB340196252 /* AppSettings.swift */; };
-		8B0F8F3C12B0A862EACB518F /* Container.swift in Sources */ = {isa = PBXBuildFile; fileRef = 705D9FCB87933FED6895E740 /* Container.swift */; };
-		78DCA9CDD4344E8DF9FA1F98 /* Game.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48DD0363A1A9C39FDB9BAA7 /* Game.swift */; };
-		DCEEEFE2F20F579E8B8B1DFA /* RuntimeConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBBC55606928DB8853CD5EB4 /* RuntimeConfig.swift */; };
-		48DA8438ADE77D5FB116A42E /* WindowsArchitecture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31521B5ABBE2C445B4D45E49 /* WindowsArchitecture.swift */; };
-		B252D435A289C1C2CC5AE6BF /* ContainerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97117344FD5675D3D0FEB64F /* ContainerService.swift */; };
-		95CBE52648BDA5270B119B03 /* GameService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC31F6A64540A77D3C9F10A4 /* GameService.swift */; };
-		DACC426CC675334B5547DDAD /* InputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ABAB18AE13DEED21C06E740 /* InputService.swift */; };
-		4AE1F56350CA227B637866E1 /* LogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BC2961E8884946C779E10D3 /* LogService.swift */; };
-		2BAD97D144ABFCD7D3D41D2A /* PerformanceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9674C414BFE11B1921060EB0 /* PerformanceService.swift */; };
-		3FA1BAA1420CC53F7668C614 /* MadeiraRuntimeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336473FF6F65E71068FE2E3D /* MadeiraRuntimeProvider.swift */; };
-		08E1FC46E87E63DB6A6D3851 /* NativeProcessLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B586897D61DE9D7D57FDB4D /* NativeProcessLauncher.swift */; };
-		150F5B2805B3408BC5D0D91D /* RuntimeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47960FA8CF0E517AB783C0A /* RuntimeProvider.swift */; };
-		C78E5CF334EC3F0226C3FFC4 /* RuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8536C7B7938C815020DADDB5 /* RuntimeService.swift */; };
-		B59BB122756260FB24DDD3A1 /* StorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB369D186B2878B5358996 /* StorageService.swift */; };
-		C015CD848538367D08FE680C /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAA2F1103FAA07A03FD9C6D0 /* Constants.swift */; };
-		584677ACD7F1C3C4D5B8E61B /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D5DAE97EBFF2CDC71D085B /* Extensions.swift */; };
-		9A37D3EC3FECC9900FE36ACF /* ContainerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF97C2218BEC3CE624525F96 /* ContainerViewModel.swift */; };
-		A6CA7F1F500FBC189AC9B157 /* GameDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 492F1EF4B49F0C9A6D999C39 /* GameDetailViewModel.swift */; };
-		B5858970250B8B5A32935B31 /* ImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C620A1C55B467EB0FBD0B2B /* ImportViewModel.swift */; };
-		913746D817BDAC986487282C /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF79CC4A1FC29B0807B5749 /* LibraryViewModel.swift */; };
-		1E087214748EB05339F8CA29 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F7FC7E7FB0BA29146AF9848 /* SettingsViewModel.swift */; };
-		F17CA4A6BEF3EE422F1EB4EF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15EDD4904EA2063EE204740 /* ContentView.swift */; };
-		CD069CBF703D07AE81A6C107 /* GameDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6B92EEE4FA3E2E8654B4DB /* GameDetailView.swift */; };
-		2E15EAAA85BC46927B22E0C7 /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A33D913D607B6296CA1722C /* ImportView.swift */; };
-		12ED0DDD35B02D472BEB53AC /* EmptyLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5090656BDEC88D6F35157AF6 /* EmptyLibraryView.swift */; };
-		BC3086A58985C97E8EF39D83 /* GameCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A26064F4944CBBF61409DA /* GameCardView.swift */; };
-		808B60B826CF17E56EABAA47 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6015AD17A9F32A29A9EE785E /* LibraryView.swift */; };
-		E974321E8BA9D4BDBB28E283 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 896E2D8D43398AE5E8AD83CD /* LogsView.swift */; };
-		130DC89CEC1B5A8BF91CD454 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4FE003504F4C83268762CCC /* SettingsView.swift */; };
-		21266B3DC18945709FE78FB0 /* ContainerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 818B7CA6CC8897E0C4AB0987 /* ContainerTests.swift */; };
-		8E9EB419C0AD08DC8F9B973A /* ImportValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D031C9E1F9EF0864DF8FA57F /* ImportValidationTests.swift */; };
-		09167994D366B1CE5C941AAB /* PersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23DE86F005572A2C65E3210 /* PersistenceTests.swift */; };
-		B459DBBB12AE1CF54BC44DCB /* RuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAFB0FB896F6B596B31CBC93 /* RuntimeTests.swift */; };
-		1E098CE6BBD832937E11759C /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6B4F8F2B9CAE07975DF5AD4 /* SettingsTests.swift */; };
-		6EEEE39B1AB4355FA617C29C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B58B2FC89C30513E5D34080C /* Assets.xcassets */; };
+		B00100000000000000000001 /* GameHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000001 /* GameHubApp.swift */; };
+		B00100000000000000000002 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000002 /* AppSettings.swift */; };
+		B00100000000000000000003 /* Container.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000003 /* Container.swift */; };
+		B00100000000000000000004 /* Game.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000004 /* Game.swift */; };
+		B00100000000000000000005 /* RuntimeConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000005 /* RuntimeConfig.swift */; };
+		B00100000000000000000006 /* WindowsArchitecture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000006 /* WindowsArchitecture.swift */; };
+		B00100000000000000000007 /* FEXBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000007 /* FEXBridge.mm */; };
+		B00100000000000000000008 /* HostWeakStubs.c in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000008 /* HostWeakStubs.c */; };
+		B00100000000000000000009 /* IOSDisplayShim.m in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000009 /* IOSDisplayShim.m */; };
+		B0010000000000000000000A /* JITAllocator.c in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000A /* JITAllocator.c */; };
+		B0010000000000000000000B /* PrefixExtractor.c in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000B /* PrefixExtractor.c */; };
+		B0010000000000000000000C /* WineProcessBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000C /* WineProcessBridge.m */; };
+		B0010000000000000000000D /* WineServerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000D /* WineServerBridge.m */; };
+		B0010000000000000000000E /* ContainerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000E /* ContainerService.swift */; };
+		B0010000000000000000000F /* GameService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000F /* GameService.swift */; };
+		B00100000000000000000010 /* InputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000010 /* InputService.swift */; };
+		B00100000000000000000011 /* LogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000011 /* LogService.swift */; };
+		B00100000000000000000012 /* PerformanceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000012 /* PerformanceService.swift */; };
+		B00100000000000000000013 /* MadeiraBootSequence.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000013 /* MadeiraBootSequence.swift */; };
+		B00100000000000000000014 /* MadeiraRuntimeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000014 /* MadeiraRuntimeProvider.swift */; };
+		B00100000000000000000015 /* NativeProcessLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000015 /* NativeProcessLauncher.swift */; };
+		B00100000000000000000016 /* RuntimeBundleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000016 /* RuntimeBundleLayout.swift */; };
+		B00100000000000000000017 /* RuntimeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000017 /* RuntimeProvider.swift */; };
+		B00100000000000000000018 /* RuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000018 /* RuntimeService.swift */; };
+		B00100000000000000000019 /* StorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000019 /* StorageService.swift */; };
+		B0010000000000000000001A /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001A /* Constants.swift */; };
+		B0010000000000000000001B /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001B /* Extensions.swift */; };
+		B0010000000000000000001C /* ContainerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001C /* ContainerViewModel.swift */; };
+		B0010000000000000000001D /* GameDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001D /* GameDetailViewModel.swift */; };
+		B0010000000000000000001E /* ImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001E /* ImportViewModel.swift */; };
+		B0010000000000000000001F /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001F /* LibraryViewModel.swift */; };
+		B00100000000000000000020 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000020 /* SettingsViewModel.swift */; };
+		B00100000000000000000021 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000021 /* ContentView.swift */; };
+		B00100000000000000000022 /* GameDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000022 /* GameDetailView.swift */; };
+		B00100000000000000000023 /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000023 /* ImportView.swift */; };
+		B00100000000000000000024 /* EmptyLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000024 /* EmptyLibraryView.swift */; };
+		B00100000000000000000025 /* GameCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000025 /* GameCardView.swift */; };
+		B00100000000000000000026 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000026 /* LibraryView.swift */; };
+		B00100000000000000000027 /* MetalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000027 /* MetalHostView.swift */; };
+		B00100000000000000000028 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000028 /* LogsView.swift */; };
+		B00100000000000000000029 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000029 /* SettingsView.swift */; };
+		B0010000000000000000002A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002A /* Assets.xcassets */; };
+		B0010000000000000000002B /* ContainerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002B /* ContainerTests.swift */; };
+		B0010000000000000000002C /* ImportValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002C /* ImportValidationTests.swift */; };
+		B0010000000000000000002D /* PersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002D /* PersistenceTests.swift */; };
+		B0010000000000000000002E /* RuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002E /* RuntimeTests.swift */; };
+		B0010000000000000000002F /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002F /* SettingsTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		9FDFEC464992392C2540ADD5 /* GameHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHubApp.swift; sourceTree = "<group>"; };
-		C4FE4FF8DBD41FB340196252 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
-		705D9FCB87933FED6895E740 /* Container.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Container.swift; sourceTree = "<group>"; };
-		F48DD0363A1A9C39FDB9BAA7 /* Game.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Game.swift; sourceTree = "<group>"; };
-		EBBC55606928DB8853CD5EB4 /* RuntimeConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfig.swift; sourceTree = "<group>"; };
-		31521B5ABBE2C445B4D45E49 /* WindowsArchitecture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowsArchitecture.swift; sourceTree = "<group>"; };
-		97117344FD5675D3D0FEB64F /* ContainerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerService.swift; sourceTree = "<group>"; };
-		EC31F6A64540A77D3C9F10A4 /* GameService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameService.swift; sourceTree = "<group>"; };
-		9ABAB18AE13DEED21C06E740 /* InputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputService.swift; sourceTree = "<group>"; };
-		1BC2961E8884946C779E10D3 /* LogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogService.swift; sourceTree = "<group>"; };
-		9674C414BFE11B1921060EB0 /* PerformanceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceService.swift; sourceTree = "<group>"; };
-		336473FF6F65E71068FE2E3D /* MadeiraRuntimeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadeiraRuntimeProvider.swift; sourceTree = "<group>"; };
-		9B586897D61DE9D7D57FDB4D /* NativeProcessLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProcessLauncher.swift; sourceTree = "<group>"; };
-		B47960FA8CF0E517AB783C0A /* RuntimeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeProvider.swift; sourceTree = "<group>"; };
-		8536C7B7938C815020DADDB5 /* RuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeService.swift; sourceTree = "<group>"; };
-		5ADB369D186B2878B5358996 /* StorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageService.swift; sourceTree = "<group>"; };
-		CAA2F1103FAA07A03FD9C6D0 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
-		E1D5DAE97EBFF2CDC71D085B /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
-		DF97C2218BEC3CE624525F96 /* ContainerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerViewModel.swift; sourceTree = "<group>"; };
-		492F1EF4B49F0C9A6D999C39 /* GameDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetailViewModel.swift; sourceTree = "<group>"; };
-		0C620A1C55B467EB0FBD0B2B /* ImportViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportViewModel.swift; sourceTree = "<group>"; };
-		FEF79CC4A1FC29B0807B5749 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
-		3F7FC7E7FB0BA29146AF9848 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
-		A15EDD4904EA2063EE204740 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		AF6B92EEE4FA3E2E8654B4DB /* GameDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetailView.swift; sourceTree = "<group>"; };
-		9A33D913D607B6296CA1722C /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
-		5090656BDEC88D6F35157AF6 /* EmptyLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyLibraryView.swift; sourceTree = "<group>"; };
-		E6A26064F4944CBBF61409DA /* GameCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCardView.swift; sourceTree = "<group>"; };
-		6015AD17A9F32A29A9EE785E /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
-		896E2D8D43398AE5E8AD83CD /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
-		A4FE003504F4C83268762CCC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		818B7CA6CC8897E0C4AB0987 /* ContainerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerTests.swift; sourceTree = "<group>"; };
-		D031C9E1F9EF0864DF8FA57F /* ImportValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportValidationTests.swift; sourceTree = "<group>"; };
-		B23DE86F005572A2C65E3210 /* PersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceTests.swift; sourceTree = "<group>"; };
-		AAFB0FB896F6B596B31CBC93 /* RuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeTests.swift; sourceTree = "<group>"; };
-		F6B4F8F2B9CAE07975DF5AD4 /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
-		B58B2FC89C30513E5D34080C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		102DE2A2AE766BE3209864BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		C5ECB9C96059C305DE12559E /* GameHub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GameHub.entitlements; sourceTree = "<group>"; };
-		5A07B39B079D429B404E4D0F /* GameHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GameHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		50ACDB356FA954DDF81AF295 /* GameHubTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GameHubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00100000000000000000001 /* GameHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHubApp.swift; sourceTree = "<group>"; };
+		F00100000000000000000002 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		F00100000000000000000003 /* Container.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Container.swift; sourceTree = "<group>"; };
+		F00100000000000000000004 /* Game.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Game.swift; sourceTree = "<group>"; };
+		F00100000000000000000005 /* RuntimeConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfig.swift; sourceTree = "<group>"; };
+		F00100000000000000000006 /* WindowsArchitecture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowsArchitecture.swift; sourceTree = "<group>"; };
+		F00100000000000000000007 /* FEXBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = FEXBridge.mm; sourceTree = "<group>"; };
+		F00100000000000000000008 /* HostWeakStubs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = HostWeakStubs.c; sourceTree = "<group>"; };
+		F00100000000000000000009 /* IOSDisplayShim.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = IOSDisplayShim.m; sourceTree = "<group>"; };
+		F0010000000000000000000A /* JITAllocator.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = JITAllocator.c; sourceTree = "<group>"; };
+		F0010000000000000000000B /* PrefixExtractor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = PrefixExtractor.c; sourceTree = "<group>"; };
+		F0010000000000000000000C /* WineProcessBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WineProcessBridge.m; sourceTree = "<group>"; };
+		F0010000000000000000000D /* WineServerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WineServerBridge.m; sourceTree = "<group>"; };
+		F0010000000000000000000E /* ContainerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerService.swift; sourceTree = "<group>"; };
+		F0010000000000000000000F /* GameService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameService.swift; sourceTree = "<group>"; };
+		F00100000000000000000010 /* InputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputService.swift; sourceTree = "<group>"; };
+		F00100000000000000000011 /* LogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogService.swift; sourceTree = "<group>"; };
+		F00100000000000000000012 /* PerformanceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceService.swift; sourceTree = "<group>"; };
+		F00100000000000000000013 /* MadeiraBootSequence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadeiraBootSequence.swift; sourceTree = "<group>"; };
+		F00100000000000000000014 /* MadeiraRuntimeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MadeiraRuntimeProvider.swift; sourceTree = "<group>"; };
+		F00100000000000000000015 /* NativeProcessLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProcessLauncher.swift; sourceTree = "<group>"; };
+		F00100000000000000000016 /* RuntimeBundleLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundleLayout.swift; sourceTree = "<group>"; };
+		F00100000000000000000017 /* RuntimeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeProvider.swift; sourceTree = "<group>"; };
+		F00100000000000000000018 /* RuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeService.swift; sourceTree = "<group>"; };
+		F00100000000000000000019 /* StorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageService.swift; sourceTree = "<group>"; };
+		F0010000000000000000001A /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		F0010000000000000000001B /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		F0010000000000000000001C /* ContainerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerViewModel.swift; sourceTree = "<group>"; };
+		F0010000000000000000001D /* GameDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetailViewModel.swift; sourceTree = "<group>"; };
+		F0010000000000000000001E /* ImportViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportViewModel.swift; sourceTree = "<group>"; };
+		F0010000000000000000001F /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
+		F00100000000000000000020 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		F00100000000000000000021 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F00100000000000000000022 /* GameDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetailView.swift; sourceTree = "<group>"; };
+		F00100000000000000000023 /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
+		F00100000000000000000024 /* EmptyLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyLibraryView.swift; sourceTree = "<group>"; };
+		F00100000000000000000025 /* GameCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCardView.swift; sourceTree = "<group>"; };
+		F00100000000000000000026 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		F00100000000000000000027 /* MetalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalHostView.swift; sourceTree = "<group>"; };
+		F00100000000000000000028 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
+		F00100000000000000000029 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F0010000000000000000002A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F0010000000000000000002B /* ContainerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002C /* ImportValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportValidationTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002D /* PersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002E /* RuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002F /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000030 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00100000000000000000031 /* GameHub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GameHub.entitlements; sourceTree = "<group>"; };
+		F00100000000000000000032 /* GameHub-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GameHub-Bridging-Header.h"; sourceTree = "<group>"; };
+		A10000000000000000000004 /* GameHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GameHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000005 /* GameHubTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GameHubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
 /* Begin PBXFrameworksBuildPhase section */
-		7BCCCE497AA012DCD2E0EAF8 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		7635AE74744FD69F6E300454 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		P00100000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (
+		); runOnlyForDeploymentPostprocessing = 0; };
+		P00100000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (
+		); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G00100000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				G00100000000000000000002 /* GameHub */,
+				G00100000000000000000003 /* GameHubTests */,
+				G00100000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		G00100000000000000000002 /* GameHub */ = {
+			isa = PBXGroup;
+			children = (
+				F00100000000000000000001 /* GameHubApp.swift */,
+				F00100000000000000000002 /* AppSettings.swift */,
+				F00100000000000000000003 /* Container.swift */,
+				F00100000000000000000004 /* Game.swift */,
+				F00100000000000000000005 /* RuntimeConfig.swift */,
+				F00100000000000000000006 /* WindowsArchitecture.swift */,
+				F00100000000000000000007 /* FEXBridge.mm */,
+				F00100000000000000000008 /* HostWeakStubs.c */,
+				F00100000000000000000009 /* IOSDisplayShim.m */,
+				F0010000000000000000000A /* JITAllocator.c */,
+				F0010000000000000000000B /* PrefixExtractor.c */,
+				F0010000000000000000000C /* WineProcessBridge.m */,
+				F0010000000000000000000D /* WineServerBridge.m */,
+				F00100000000000000000032 /* GameHub-Bridging-Header.h */,
+				F0010000000000000000000E /* ContainerService.swift */,
+				F0010000000000000000000F /* GameService.swift */,
+				F00100000000000000000010 /* InputService.swift */,
+				F00100000000000000000011 /* LogService.swift */,
+				F00100000000000000000012 /* PerformanceService.swift */,
+				F00100000000000000000013 /* MadeiraBootSequence.swift */,
+				F00100000000000000000014 /* MadeiraRuntimeProvider.swift */,
+				F00100000000000000000015 /* NativeProcessLauncher.swift */,
+				F00100000000000000000016 /* RuntimeBundleLayout.swift */,
+				F00100000000000000000017 /* RuntimeProvider.swift */,
+				F00100000000000000000018 /* RuntimeService.swift */,
+				F00100000000000000000019 /* StorageService.swift */,
+				F0010000000000000000001A /* Constants.swift */,
+				F0010000000000000000001B /* Extensions.swift */,
+				F0010000000000000000001C /* ContainerViewModel.swift */,
+				F0010000000000000000001D /* GameDetailViewModel.swift */,
+				F0010000000000000000001E /* ImportViewModel.swift */,
+				F0010000000000000000001F /* LibraryViewModel.swift */,
+				F00100000000000000000020 /* SettingsViewModel.swift */,
+				F00100000000000000000021 /* ContentView.swift */,
+				F00100000000000000000022 /* GameDetailView.swift */,
+				F00100000000000000000023 /* ImportView.swift */,
+				F00100000000000000000024 /* EmptyLibraryView.swift */,
+				F00100000000000000000025 /* GameCardView.swift */,
+				F00100000000000000000026 /* LibraryView.swift */,
+				F00100000000000000000027 /* MetalHostView.swift */,
+				F00100000000000000000028 /* LogsView.swift */,
+				F00100000000000000000029 /* SettingsView.swift */,
+				F0010000000000000000002A /* Assets.xcassets */,
+				F00100000000000000000030 /* Info.plist */,
+				F00100000000000000000031 /* GameHub.entitlements */,
+			);
+			path = GameHub;
+			sourceTree = "<group>";
+		};
+		G00100000000000000000003 /* GameHubTests */ = {
+			isa = PBXGroup;
+			children = (
+				F0010000000000000000002B /* ContainerTests.swift */,
+				F0010000000000000000002C /* ImportValidationTests.swift */,
+				F0010000000000000000002D /* PersistenceTests.swift */,
+				F0010000000000000000002E /* RuntimeTests.swift */,
+				F0010000000000000000002F /* SettingsTests.swift */,
+			);
+			path = GameHubTests;
+			sourceTree = "<group>";
+		};
+		G00100000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000004 /* GameHub.app */,
+				A10000000000000000000005 /* GameHubTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000002 /* GameHub */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00100000000000000000002 /* Build configuration list for PBXNativeTarget "GameHub" */;
+			buildPhases = (
+				S00100000000000000000001 /* Sources */,
+				P00100000000000000000001 /* Frameworks */,
+				R00100000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GameHub;
+			productName = GameHub;
+			productReference = A10000000000000000000004 /* GameHub.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000003 /* GameHubTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00100000000000000000003 /* Build configuration list for PBXNativeTarget "GameHubTests" */;
+			buildPhases = (
+				S00100000000000000000002 /* Sources */,
+				P00100000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D00100000000000000000001 /* PBXTargetDependency */,
+			);
+			name = GameHubTests;
+			productName = GameHubTests;
+			productReference = A10000000000000000000005 /* GameHubTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10000000000000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					A10000000000000000000003 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A10000000000000000000002;
+					};
+				};
+			};
+			buildConfigurationList = C00100000000000000000001 /* Build configuration list for PBXProject "GameHub" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = G00100000000000000000001;
+			productRefGroup = G00100000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000002 /* GameHub */,
+				A10000000000000000000003 /* GameHubTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		R00100000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000002A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		S00100000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100000000000000000001 /* GameHubApp.swift in Sources */,
+				B00100000000000000000002 /* AppSettings.swift in Sources */,
+				B00100000000000000000003 /* Container.swift in Sources */,
+				B00100000000000000000004 /* Game.swift in Sources */,
+				B00100000000000000000005 /* RuntimeConfig.swift in Sources */,
+				B00100000000000000000006 /* WindowsArchitecture.swift in Sources */,
+				B00100000000000000000007 /* FEXBridge.mm in Sources */,
+				B00100000000000000000008 /* HostWeakStubs.c in Sources */,
+				B00100000000000000000009 /* IOSDisplayShim.m in Sources */,
+				B0010000000000000000000A /* JITAllocator.c in Sources */,
+				B0010000000000000000000B /* PrefixExtractor.c in Sources */,
+				B0010000000000000000000C /* WineProcessBridge.m in Sources */,
+				B0010000000000000000000D /* WineServerBridge.m in Sources */,
+				B0010000000000000000000E /* ContainerService.swift in Sources */,
+				B0010000000000000000000F /* GameService.swift in Sources */,
+				B00100000000000000000010 /* InputService.swift in Sources */,
+				B00100000000000000000011 /* LogService.swift in Sources */,
+				B00100000000000000000012 /* PerformanceService.swift in Sources */,
+				B00100000000000000000013 /* MadeiraBootSequence.swift in Sources */,
+				B00100000000000000000014 /* MadeiraRuntimeProvider.swift in Sources */,
+				B00100000000000000000015 /* NativeProcessLauncher.swift in Sources */,
+				B00100000000000000000016 /* RuntimeBundleLayout.swift in Sources */,
+				B00100000000000000000017 /* RuntimeProvider.swift in Sources */,
+				B00100000000000000000018 /* RuntimeService.swift in Sources */,
+				B00100000000000000000019 /* StorageService.swift in Sources */,
+				B0010000000000000000001A /* Constants.swift in Sources */,
+				B0010000000000000000001B /* Extensions.swift in Sources */,
+				B0010000000000000000001C /* ContainerViewModel.swift in Sources */,
+				B0010000000000000000001D /* GameDetailViewModel.swift in Sources */,
+				B0010000000000000000001E /* ImportViewModel.swift in Sources */,
+				B0010000000000000000001F /* LibraryViewModel.swift in Sources */,
+				B00100000000000000000020 /* SettingsViewModel.swift in Sources */,
+				B00100000000000000000021 /* ContentView.swift in Sources */,
+				B00100000000000000000022 /* GameDetailView.swift in Sources */,
+				B00100000000000000000023 /* ImportView.swift in Sources */,
+				B00100000000000000000024 /* EmptyLibraryView.swift in Sources */,
+				B00100000000000000000025 /* GameCardView.swift in Sources */,
+				B00100000000000000000026 /* LibraryView.swift in Sources */,
+				B00100000000000000000027 /* MetalHostView.swift in Sources */,
+				B00100000000000000000028 /* LogsView.swift in Sources */,
+				B00100000000000000000029 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		S00100000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000002B /* ContainerTests.swift in Sources */,
+				B0010000000000000000002C /* ImportValidationTests.swift in Sources */,
+				B0010000000000000000002D /* PersistenceTests.swift in Sources */,
+				B0010000000000000000002E /* RuntimeTests.swift in Sources */,
+				B0010000000000000000002F /* SettingsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00100000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000002 /* GameHub */;
+			targetProxy = D00100000000000000000002 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		D00100000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000002;
+			remoteInfo = GameHub;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin XCBuildConfiguration section */
+		K00100000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		K00100000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		K00100000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_ENTITLEMENTS = GameHub/Resources/GameHub.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/GameHub/Native/Madeira";
+				INFOPLIST_FILE = GameHub/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = GameHub;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/GameHub/Native/Madeira/HostLibs";
+				OTHER_LDFLAGS = (
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					UIKit,
+					"-framework",
+					GameController,
+					"-lz",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gamehub.ios;
+				PRODUCT_NAME = GameHub;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "GameHub/Native/Madeira/GameHub-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		K00100000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_ENTITLEMENTS = GameHub/Resources/GameHub.entitlements;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/GameHub/Native/Madeira";
+				INFOPLIST_FILE = GameHub/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = GameHub;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/GameHub/Native/Madeira/HostLibs";
+				OTHER_LDFLAGS = (
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					UIKit,
+					"-framework",
+					GameController,
+					"-lz",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gamehub.ios;
+				PRODUCT_NAME = GameHub;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "GameHub/Native/Madeira/GameHub-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		K00100000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gamehub.ios.tests;
+				PRODUCT_NAME = GameHubTests;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GameHub.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GameHub";
+			};
+			name = Debug;
+		};
+		K00100000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gamehub.ios.tests;
+				PRODUCT_NAME = GameHubTests;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GameHub.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GameHub";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C00100000000000000000001 /* Build configuration list for PBXProject "GameHub" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K00100000000000000000001 /* Debug */,
+				K00100000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00100000000000000000002 /* Build configuration list for PBXNativeTarget "GameHub" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K00100000000000000000003 /* Debug */,
+				K00100000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00100000000000000000003 /* Build configuration list for PBXNativeTarget "GameHubTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K00100000000000000000005 /* Debug */,
+				K00100000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
