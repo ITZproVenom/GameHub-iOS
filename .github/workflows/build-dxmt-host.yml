@@ -59,8 +59,18 @@ jobs:
             fi
           }
           if [ -d "$DXMT_SRC/winemetal/unix" ]; then
-            compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix || true
-            compile_objc "$DXMT_SRC/winemetal/unix/cache.c" winemetal_cache || true
+            echo "winemetal unix sources:"
+            ls -la "$DXMT_SRC/winemetal/unix" || true
+            for src in "$DXMT_SRC/winemetal/unix"/*; do
+              [ -f "$src" ] || continue
+              case "$src" in
+                *.c|*.m|*.mm) ;;
+                *) continue ;;
+              esac
+              base=$(basename "$src")
+              name=${base%.*}
+              compile_objc "$src" "$name" || true
+            done
           fi
           printf '%s\n' 'int dxmt_host_probe(void) { return 1; }' > "$OBJ/dxmt_host_probe.c"
           xcrun -sdk iphoneos clang $COMMON -c "$OBJ/dxmt_host_probe.c" -o "$OBJ/dxmt_host_probe.o"
