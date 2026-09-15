@@ -8,6 +8,17 @@ struct ImportError: LocalizedError, Sendable {
     var errorDescription: String? { message }
 }
 
+extension UTType {
+    /// Windows PE executable. Declared so the document picker can surface .exe files on device.
+    static var windowsExecutable: UTType {
+        UTType(exportedAs: "com.microsoft.windows-executable", conformingTo: .data)
+    }
+
+    static var windowsInstaller: UTType {
+        UTType(exportedAs: "com.microsoft.msi-installer", conformingTo: .data)
+    }
+}
+
 @MainActor
 final class ImportViewModel: ObservableObject {
     @Published var isImporting = false
@@ -29,12 +40,20 @@ final class ImportViewModel: ObservableObject {
         self.containerService = containerService
     }
 
+    /// Content types accepted by the system document picker.
+    /// Include both custom types and broad fallbacks so .exe is visible on real devices.
     var supportedContentTypes: [UTType] {
-        var types: [UTType] = []
-        types.append(UTType(filenameExtension: "exe") ?? .exe)
-        types.append(UTType(filenameExtension: "msi") ?? .data)
-        types.append(UTType(filenameExtension: "bat") ?? .data)
-        types.append(UTType(filenameExtension: "cmd") ?? .data)
+        var types: [UTType] = [
+            .windowsExecutable,
+            .windowsInstaller,
+            .data,          // catch-all so Files shows unknown binary types
+            .item,
+        ]
+        // Prefer filename-extension types when the system knows them
+        if let exe = UTType(filenameExtension: "exe") { types.insert(exe, at: 0) }
+        if let msi = UTType(filenameExtension: "msi") { types.insert(msi, at: 0) }
+        if let bat = UTType(filenameExtension: "bat") { types.insert(bat, at: 0) }
+        if let cmd = UTType(filenameExtension: "cmd") { types.insert(cmd, at: 0) }
         return types
     }
 
@@ -42,25 +61,72 @@ final class ImportViewModel: ObservableObject {
 
     func importExecutable(from sourceURL: URL) async {
         isImporting = true
+        importError = nil
         defer { isImporting = false }
 
         let executableName = sourceURL.lastPathComponent
+
+        // 1. Extension gate (pathExtension works for security-scoped URLs)
         guard sourceURL.isExecutable else {
-            importError = ImportError("Only .exe, .msi, .bat and .cmd files can be imported as Windows executables.").localizedDescription
+            importError = "Only .exe, .msi, .bat and .cmd files can be imported. Selected: \(executableName)"
             return
         }
 
-        let securityScoped = sourceURL.startAccessingSecurityScopedResource()
+        // 2. Security-scoped access — required for Files / iCloud / external storage
+        let didStartAccess = sourceURL.startAccessingSecurityScopedResource()
         defer {
-            if securityScoped {
+            if didStartAccess {
                 sourceURL.stopAccessingSecurityScopedResource()
             }
         }
 
+        // 3. Validate the file is actually readable while the scope is held
+        do {
+            let values = try sourceURL.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .fileSizeKey,
+                .isReadableKey,
+            ])
+            guard values.isRegularFile == true else {
+                importError = "Selected item is not a regular file."
+                return
+            }
+            guard (values.isReadable ?? false) || didStartAccess else {
+                importError = "Cannot read the selected file. Check permissions."
+                return
+            }
+            let size = Int64(values.fileSize ?? 0)
+            if size <= 0 {
+                // Fallback: try opening
+                let handle = try FileHandle(forReadingFrom: sourceURL)
+                defer { try? handle.close() }
+                let data = try handle.read(upToCount: 64)
+                if data == nil || data!.isEmpty {
+                    importError = "Selected file is empty or unreadable."
+                    return
+                }
+            }
+        } catch {
+            importError = "Cannot access selected file: \(error.localizedDescription)"
+            return
+        }
+
+        // 4. Copy into the app sandbox (must happen while security scope is active)
         do {
             let gameID = UUID()
-            let destinationURL = try storageService.copyFileToLibrary(sourceURL: sourceURL, gameID: gameID)
-            let size = fileSize(at: destinationURL)
+            let destinationURL = try storageService.copyFileToLibrary(
+                sourceURL: sourceURL,
+                gameID: gameID
+            )
+
+            // Verify the copy landed and is non-zero
+            let attrs = try FileManager.default.attributesOfItem(atPath: destinationURL.path)
+            let size = (attrs[.size] as? Int64) ?? 0
+            guard size > 0 else {
+                importError = "Imported file is empty after copy."
+                try? FileManager.default.removeItem(at: destinationURL)
+                return
+            }
 
             let title = destinationURL.deletingPathExtension().lastPathComponent
                 .replacingOccurrences(of: "_", with: " ")
@@ -68,6 +134,7 @@ final class ImportViewModel: ObservableObject {
                 .truncatedToWordBoundary(limit: 60)
 
             var game = Game(
+                id: gameID,
                 title: title,
                 executableName: executableName,
                 executableURL: destinationURL,
@@ -78,6 +145,7 @@ final class ImportViewModel: ObservableObject {
 
             gameService.addGame(game)
 
+            // Create a container / prefix for this game (best-effort)
             if let created = try? await containerService.createContainer(for: game, architecture: .x86_64) {
                 game.containerID = created.id
                 gameService.updateGame(game)
@@ -85,7 +153,7 @@ final class ImportViewModel: ObservableObject {
 
             importedGame = game
         } catch {
-            importError = error.localizedDescription
+            importError = "Import failed: \(error.localizedDescription)"
         }
     }
 
@@ -97,17 +165,12 @@ final class ImportViewModel: ObservableObject {
 
         let folders = storageService.contentsOfDirectory(at: gamesDirectory)
         for folder in folders where folder.hasDirectoryPath {
-            let content = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            let content = (try? FileManager.default.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.isRegularFileKey]
+            )) ?? []
             discoveredExecutables.append(contentsOf: content.filter { $0.isExecutable })
         }
-    }
-
-    private func fileSize(at url: URL) -> Int64 {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attributes[.size] as? Int64 else {
-            return 0
-        }
-        return size
     }
 }
 
