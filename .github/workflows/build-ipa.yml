@@ -70,26 +70,14 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          # GameHub IOSDisplayShim.{h,m} defines winios_metal_layer_for_hwnd and
-          # madeira_display_set_layer. Madeira's copy *calls* winios_metal_layer_for_hwnd
-          # without defining it, which broke the IPA link (undefined symbol).
-          # Keep the GameHub shim; only overlay wineserver / prefix extractor when present.
+          # Never overlay IOSDisplayShim — GameHub defines winios_metal_layer_for_hwnd.
+          # Madeira's file only references that symbol (from my_view_create_metal_view).
+          echo "Keeping GameHub IOSDisplayShim.m/.h (do not copy Madeira display shim)"
           for f in WineServerBridge.m PrefixExtractor.c WineServerBridge.h PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
-          if [[ -f "app/Madeira/IOSDisplayShim.m" ]]; then
-            if grep -q 'winios_metal_layer_for_hwnd' app/Madeira/IOSDisplayShim.m \
-               && grep -q 'madeira_display_set_layer' app/Madeira/IOSDisplayShim.m \
-               && grep -q 'CAMetalLayer \*winios_metal_layer_for_hwnd' app/Madeira/IOSDisplayShim.m; then
-              echo "Madeira IOSDisplayShim defines winios_metal_layer_for_hwnd — overlaying"
-              cp -v app/Madeira/IOSDisplayShim.m "$NAT/IOSDisplayShim.m"
-              [[ -f app/Madeira/IOSDisplayShim.h ]] && cp -v app/Madeira/IOSDisplayShim.h "$NAT/IOSDisplayShim.h"
-            else
-              echo "Keeping GameHub IOSDisplayShim (Madeira copy does not define winios_metal_layer_for_hwnd)"
-            fi
-          fi
 
           if [[ -f app/Madeira/JITAllocator.c ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.c; then
             cp -v app/Madeira/JITAllocator.c "$NAT/JITAllocator.c"
