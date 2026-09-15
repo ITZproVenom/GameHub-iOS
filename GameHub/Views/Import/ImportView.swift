@@ -24,7 +24,7 @@ struct ImportView: View {
                 VStack(spacing: 6) {
                     Text("Import a Windows Executable")
                         .font(.title2.bold())
-                    Text("Select a .exe, .msi, .bat or .cmd file. It will be copied into GameHub's managed storage.")
+                    Text("Select a .exe, .msi, .bat or .cmd file from the Files app. It will be copied into GameHub's managed storage.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -32,6 +32,7 @@ struct ImportView: View {
                 }
 
                 Button {
+                    viewModel.importError = nil
                     showingDocumentPicker = true
                 } label: {
                     Label("Choose File", systemImage: "folder")
@@ -40,6 +41,7 @@ struct ImportView: View {
                         .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isImporting)
 
                 if viewModel.isImporting {
                     ProgressView("Importing…")
@@ -47,11 +49,12 @@ struct ImportView: View {
                 }
 
                 if let error = viewModel.importError {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
+                        .padding(.top, 4)
                 }
 
                 Spacer()
@@ -62,6 +65,7 @@ struct ImportView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
+                        .disabled(viewModel.isImporting)
                 }
             }
             .fileImporter(
@@ -71,12 +75,15 @@ struct ImportView: View {
             ) { result in
                 switch result {
                 case .success(let urls):
-                    let url = urls[0]
+                    guard let url = urls.first else {
+                        viewModel.importError = "No file was selected."
+                        return
+                    }
                     Task {
                         await viewModel.importExecutable(from: url)
                     }
                 case .failure(let error):
-                    viewModel.importError = error.localizedDescription
+                    viewModel.importError = "Document picker failed: \(error.localizedDescription)"
                 }
             }
             .onChange(of: viewModel.importedGame) { _, game in
