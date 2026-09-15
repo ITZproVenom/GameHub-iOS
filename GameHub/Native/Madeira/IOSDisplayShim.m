@@ -76,6 +76,14 @@ static macdrv_window my_get_cocoa_window(HWND hwnd, BOOL require_on_screen) {
     (void)hwnd; (void)require_on_screen; return NULL;
 }
 
+CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd) {
+    (void)hwnd;
+    pthread_mutex_lock(&g_lock);
+    CAMetalLayer *layer = g_layer;
+    pthread_mutex_unlock(&g_lock);
+    return layer;
+}
+
 struct macdrv_functions_t macdrv_functions = {
     .macdrv_init_display_devices = my_init_display_devices,
     .get_win_data = my_get_win_data,
