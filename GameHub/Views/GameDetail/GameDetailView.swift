@@ -10,6 +10,7 @@ struct GameDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 heroSection
+                jitBanner
                 playSection
                 runtimeSection
                 containerSection
@@ -20,7 +21,8 @@ struct GameDetailView: View {
         }
         .navigationTitle(viewModel.game.title)
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Error", isPresented: alertBinding) {
+        .onAppear { viewModel.refreshJITStatus() }
+        .alert("Cannot Launch", isPresented: alertBinding) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage ?? "")
@@ -71,6 +73,30 @@ struct GameDetailView: View {
         .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
     }
 
+    // MARK: - JIT banner (honest status; does not block non-execution features)
+
+    private var jitBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: viewModel.jitReady ? "bolt.fill" : "bolt.slash.fill")
+                .font(.title3)
+                .foregroundStyle(viewModel.jitReady ? .green : .orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(viewModel.jitReady ? "JIT Enabled" : "JIT Required for Gameplay")
+                    .font(.subheadline.weight(.semibold))
+                Text(viewModel.jitStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            (viewModel.jitReady ? Color.green : Color.orange).opacity(0.12),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+    }
+
     // MARK: - Play
 
     private var playSection: some View {
@@ -87,7 +113,7 @@ struct GameDetailView: View {
                     } else {
                         Image(systemName: "play.fill")
                     }
-                    Text("Launch")
+                    Text(viewModel.jitReady ? "Launch" : "Launch (needs JIT)")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
@@ -111,7 +137,7 @@ struct GameDetailView: View {
             HStack {
                 Label("Madeira", systemImage: "cpu")
                 Spacer()
-                Text("Runtime integration pending")
+                Text(viewModel.jitReady ? "JIT path" : "Setup only")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -188,9 +214,6 @@ struct GameDetailView: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-        }
-        .onChange(of: viewModel.container) { _, _ in
-            // Container state refreshed by the view model.
         }
     }
 
