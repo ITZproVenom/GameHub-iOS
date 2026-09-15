@@ -81,12 +81,8 @@ enum MadeiraBootSequence {
         prefixURL: URL? = nil,
         executableURL: URL? = nil
     ) -> Outcome {
-        // Always install trap handler so a later JIT attach can use it
         jit_install_trap_handler()
 
-        // --- NO-JIT graceful path ---
-        // Do not pretend to launch. Do not start a fake interpreter.
-        // Library / import / prefix already work without this step.
         guard jit_check_debugged() else {
             return Outcome(
                 ok: false,
@@ -95,7 +91,6 @@ enum MadeiraBootSequence {
             )
         }
 
-        // JIT is available → primary FEX/Wine path
         if !fex_initialize() {
             NSLog("[GameHub] fex_initialize returned false (libFEXCore may be missing)")
         }
@@ -105,8 +100,9 @@ enum MadeiraBootSequence {
             NSLog("[GameHub] prefix: \(err)")
         }
 
+        var placedWinPath: String? = nil
         if let exe = executableURL {
-            placeExecutableInPrefix(exe: exe, prefixPath: prefix.path)
+            placedWinPath = placeExecutableInPrefix(exe: exe, prefixPath: prefix.path)
         }
 
         ws_log_quiet = 1
@@ -132,7 +128,12 @@ enum MadeiraBootSequence {
             )
         }
 
-        let wp = wine_process_start(prefix.path)
+        let wp: Int32
+        if let win = placedWinPath {
+            wp = wine_process_start_exe(prefix.path, win)
+        } else {
+            wp = wine_process_start(prefix.path)
+        }
         guard wp == 0 else {
             return Outcome(
                 ok: false,
@@ -155,7 +156,8 @@ enum MadeiraBootSequence {
         )
     }
 
-    private static func placeExecutableInPrefix(exe: URL, prefixPath: String) {
+    @discardableResult
+    private static func placeExecutableInPrefix(exe: URL, prefixPath: String) -> String {
         let fm = FileManager.default
         let driveC = URL(fileURLWithPath: prefixPath).appendingPathComponent("drive_c", isDirectory: true)
         try? fm.createDirectory(at: driveC, withIntermediateDirectories: true)
@@ -169,5 +171,6 @@ enum MadeiraBootSequence {
             try? fm.copyItem(at: exe, to: dest)
         }
         NSLog("[GameHub] placed executable at \(dest.path)")
+        return "C:\\" + exe.lastPathComponent
     }
 }

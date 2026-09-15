@@ -2,6 +2,9 @@
  * Public API (wineserver_start, wine_process_start, fex_*, madeira_extract_*)
  * is provided by WineServerBridge.m / WineProcessBridge.m / FEXBridge.mm /
  * PrefixExtractor.c.
+ *
+ * Strong symbols here are only those the IPA-copied Madeira bridges reference
+ * that are otherwise provided by libwineserver.a / Winios.m when those are linked.
  */
 #include <stdio.h>
 #include <stdbool.h>
@@ -40,3 +43,22 @@ __attribute__((weak)) volatile uint64_t g_madeira_thr_count[16] = {0};
 __attribute__((weak)) volatile uint64_t g_madeira_hot_count[64] = {0};
 __attribute__((weak)) volatile uint64_t g_madeira_syscall_count[32] = {0};
 __attribute__((weak)) volatile int g_madeira_ios_host = 1;
+
+/* IPA workflow copies Madeira WineProcessBridge.m / IOSDisplayShim.m which
+ * call these. Real implementations live in libwineserver.a and Winios.m;
+ * weak fallbacks keep the unsigned IPA linking when those archives are absent. */
+__attribute__((weak)) void wineserver_inject_client_fd(int fd) {
+    fprintf(stderr, "[GameHub] wineserver_inject_client_fd(%d): libwineserver.a not linked\n", fd);
+}
+
+__attribute__((weak)) void winios_freeze_watch_start(void) {
+    fprintf(stderr, "[GameHub] winios_freeze_watch_start: Winios.m not linked\n");
+}
+
+#ifdef __APPLE__
+/* Return type is CAMetalLayer* in ObjC; void* is ABI-compatible here. */
+__attribute__((weak)) void *winios_metal_layer_for_hwnd(void *hwnd) {
+    (void)hwnd;
+    return NULL;
+}
+#endif

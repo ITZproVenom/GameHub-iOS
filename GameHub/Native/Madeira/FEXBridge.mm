@@ -15,24 +15,24 @@ static void fex_log(const char *msg) {
     else fprintf(stderr, "[FEX] %s\n", msg);
 }
 
-// Weak symbols that become strong when libFEXCore is force_loaded.
-// These are intentionally minimal; full FEXBridge from Madeira requires FEX headers.
 extern "C" {
-    // Placeholder for future strong implementations from host libs
+    // Weak hook: a later Madeira FEX host object can override by providing
+    // a strong fex_core_probe() that returns non-zero when FEXCore is live.
+    int fex_core_probe(void) __attribute__((weak));
 }
 
 bool fex_initialize(void) {
-    // Ensure JIT pool is available first (independent of FEXCore)
     if (!jit_test_mapping()) {
         fex_log("JIT dual-mapping test failed — enable JIT (StikDebug) before FEX");
-        // Still continue; some paths init later
     }
 
-    // Until libFEXCore.a provides a real implementation that overrides this,
-    // we cannot claim FEX is ready. Return false so callers know.
-    // When the real FEXBridge.mm from Madeira is linked with libFEXCore it
-    // will provide the strong symbols.
-    fex_log("fex_initialize: libFEXCore.a not linked — FEX translation unavailable");
+    if (fex_core_probe && fex_core_probe() != 0) {
+        fex_log("fex_initialize: FEXCore probe succeeded");
+        g_fex_ready = true;
+        return true;
+    }
+
+    fex_log("fex_initialize: libFEXCore.a not providing fex_core_probe — FEX translation unavailable");
     g_fex_ready = false;
     return false;
 }
@@ -47,7 +47,7 @@ int64_t fex_test_execute(void) {
         fex_log("fex_test_execute: FEX not initialized");
         return -1;
     }
-    return -1;
+    return jit_test_execute();
 }
 
 void fex_set_log_callback(fex_log_callback_t callback) {
@@ -55,11 +55,6 @@ void fex_set_log_callback(fex_log_callback_t callback) {
 }
 
 int64_t fex_get_jit_write_offset(void) {
-    // Query the dual-map pool created by JITAllocator
-    // (real offset published when JIT region exists)
-    extern int64_t jit_get_write_offset(void) __attribute__((weak));
-    if (jit_get_write_offset) {
-        return jit_get_write_offset();
-    }
-    return 0;
+    // C symbol from JITAllocator.c — must not use C++ linkage.
+    return jit_get_write_offset();
 }
