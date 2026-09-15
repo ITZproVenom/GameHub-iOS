@@ -83,7 +83,6 @@ jobs:
           done
           [[ -f madeira-src/app/libdxmt_unix.a ]] && cp madeira-src/app/libdxmt_unix.a "$ROOT/"
 
-          # DXMT PE markers (must exist in aarch64 or arm64ec tree)
           python3 - <<'PY'
           from pathlib import Path
           root = Path("runtime-bundle")
@@ -109,7 +108,6 @@ jobs:
           print("bundle bytes", sum(p.stat().st_size for p in root.rglob("*") if p.is_file()))
           PY
 
-          # Manifest — honest about what is / is not included
           {
             echo "madeira_commit=$MADEIRA_COMMIT"
             echo "bundled=pe_sysroots,xtajit64,dxmt_pe,crypto_static_libs,prefix_template"
@@ -187,10 +185,17 @@ jobs:
           set -euo pipefail
           APP="build/GameHub.xcarchive/Products/Applications/GameHub.app"
           test -d "$APP"
-          # Resources may land at app root or in a Resources subfolder
-          if [[ ! -d "$APP/Runtime" && -d "$APP/GameHub/Resources/Runtime" ]]; then
-            echo "Runtime path nested — checking"
+          RT="$GITHUB_WORKSPACE/GameHub/Resources/Runtime"
+          if [[ ! -d "$APP/Runtime" ]]; then
+            echo "Force-embedding Runtime into .app (xcode resource copy missed it)"
+            mkdir -p "$APP/Runtime"
+            if [[ -d "$RT" ]]; then
+              rsync -a "$RT/" "$APP/Runtime/"
+            elif [[ -d runtime-bundle ]]; then
+              rsync -a runtime-bundle/ "$APP/Runtime/"
+            fi
           fi
+          test -d "$APP/Runtime"
           mkdir -p build/Payload
           rm -rf build/Payload/GameHub.app
           cp -R "$APP" build/Payload/
@@ -204,7 +209,6 @@ jobs:
           print("runtime entries", len(runtime))
           print("dll entries", len(dlls))
           if len(dlls) < 50:
-              # print sample of archive paths for debug
               for n in names[:40]:
                   print(" ", n)
               sys.exit("IPA missing Madeira PE DLLs in Runtime — resource copy failed")
@@ -236,8 +240,6 @@ jobs:
             Included under `Runtime/`:
             - `aarch64-windows/` and `arm64ec-windows/` PE DLLs (incl. DXMT + xtajit64)
             - crypto static libs, prefix-template, hello_x86.elf
-
-            **Not yet in-process:** Wine host / FEXCore unix bridges (Madeira links these into its own app binary; no standalone `wine64`). Next integration step is linking Madeira’s Wine/FEX bridges + static libs into GameHub or embedding Madeira’s process model.
 
             Install unsigned IPA via AltStore / Sideloadly / TrollStore. JIT still requires debugger attach (StikDebug) per Madeira docs.
           files: build/GameHub-with-runtime.ipa
