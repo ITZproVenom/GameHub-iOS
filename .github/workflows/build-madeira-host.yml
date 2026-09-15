@@ -14,7 +14,7 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
-  CACHE_VERSION: v10c
+  CACHE_VERSION: v10d
 
 jobs:
   host-libs:
@@ -30,17 +30,29 @@ jobs:
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+          # Wine configure wants PE cross tools; install llvm-mingw if missing
+          if [ ! -x "$HOME/llvm-mingw/bin/aarch64-w64-mingw32-clang" ]; then
+            curl -fsSL -o /tmp/llvm-mingw.tar.xz \
+              "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-macos-universal.tar.xz" || true
+            if [ -s /tmp/llvm-mingw.tar.xz ]; then
+              mkdir -p "$HOME/llvm-mingw"
+              tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/llvm-mingw" --strip-components=1 || true
+            fi
+          fi
+          if [ -d "$HOME/llvm-mingw/bin" ]; then
+            echo "$HOME/llvm-mingw/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Cache host libs
         uses: actions/cache@v4
         with:
-          path: host-libs-cache
-          key: madeira-host-v10c-${{ env.MADEIRA_COMMIT }}
+          path: |
+            host-libs-cache
+            ~/llvm-mingw
+          key: madeira-host-v10d-${{ env.MADEIRA_COMMIT }}
           restore-keys: |
+            madeira-host-v10d-
             madeira-host-v10c-
-            madeira-host-v10b-
-            madeira-host-v10-
-            madeira-host-v9-
 
       - name: Prepare dirs
         run: |
@@ -75,7 +87,7 @@ jobs:
         timeout-minutes: 12
         run: |
           set -euo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          export PATH="$HOME/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           export BISON=/opt/homebrew/opt/bison/bin/bison
           export FLEX=/opt/homebrew/opt/flex/bin/flex
           cd madeira/wine
@@ -104,6 +116,7 @@ jobs:
               printf '%s\n' '#define HAVE_PTHREAD_H 1'
               printf '%s\n' '#define HAVE_SYS_MMAN_H 1'
               printf '%s\n' '#define HAVE_SYS_SOCKET_H 1'
+              printf '%s\n' '#define HAVE_SYS_UN_H 1'
               printf '%s\n' '#define HAVE_NETINET_IN_H 1'
               printf '%s\n' '#define HAVE_ARPA_INET_H 1'
               printf '%s\n' '#define HAVE_FCNTL_H 1'
@@ -124,25 +137,35 @@ jobs:
         timeout-minutes: 30
         run: |
           set -uo pipefail
-          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          export PATH="$HOME/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
           cd madeira
           mkdir -p app/Madeira "$GITHUB_WORKSPACE/host-libs"
+          # Force rebuild if under 1.5MB (partial)
           if [ -s "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" ]; then
             SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a")
-            if [ "$SZ" -gt 500000 ]; then
+            if [ "$SZ" -gt 1500000 ]; then
               echo "using-cached-ntdll size=$SZ"
               cp -v "$GITHUB_WORKSPACE/host-libs/libntdll_unix.a" app/Madeira/
               echo "ntdll_ok=1" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            echo "cached ntdll too small ($SZ) — rebuild"
           fi
           set +e
           bash build/ntdll-unix/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/ntdll-unix.log"
           BUILD_RC=${PIPESTATUS[0]}
           set +e
           OBJ=build/ntdll-unix/obj
+          # Dump compiler errors for failed units
+          if [ -d "$OBJ" ]; then
+            echo "=== ntdll .err files ==="
+            for e in "$OBJ"/*.err; do
+              [ -s "$e" ] || continue
+              echo "--- $e ---"
+              head -20 "$e"
+            done
+          fi
           if [ ! -s app/Madeira/libntdll_unix.a ] && [ -d "$OBJ" ]; then
-            # Portable (macOS bash 3.2 — no mapfile): ar all .o via find
             NOBJ=$(find "$OBJ" -name '*.o' -type f 2>/dev/null | wc -l | tr -d ' ')
             echo "ntdll-objs=$NOBJ"
             if [ "$NOBJ" -gt 3 ]; then
@@ -177,12 +200,13 @@ jobs:
           SHIMS=build/ntdll-unix/shims
           if [ -s "$GITHUB_WORKSPACE/host-libs/libwineserver.a" ]; then
             SZ=$(wc -c < "$GITHUB_WORKSPACE/host-libs/libwineserver.a")
-            if [ "$SZ" -gt 200000 ]; then
+            if [ "$SZ" -gt 500000 ]; then
               echo "using-cached-wineserver size=$SZ"
               cp -v "$GITHUB_WORKSPACE/host-libs/libwineserver.a" app/Madeira/
               echo "wineserver_ok=1" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+            echo "cached wineserver too small ($SZ) — rebuild"
           fi
           if [ -f app/Madeira/libwineserver.a ] || [ -f "$OBJ/libwineserver.a" ]; then
             bash build/wineserver/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/wineserver.log" || true
@@ -195,6 +219,7 @@ jobs:
               -I"$WS" -I"$WINE_SRC/server" -I"$SHIMS" \
               -include "$WS/config_ios.h" -include stdarg.h \
               -include "$WS/unicode_fix.h" -include "$WS/wineserver_ios_kill.h" \
+              -include sys/un.h -include sys/socket.h \
               -DBINDIR=\"/usr/local/bin\" -DDATADIR=\"/usr/local/share\" \
               -D__WINESRC__ -DWINE_IOS=1 -Dmain=wineserver_main \
               -Wno-implicit-function-declaration -Wno-int-conversion \
@@ -203,7 +228,7 @@ jobs:
               return 0
             else
               echo FAILED
-              head -5 "$OBJ/err-$name.txt" || true
+              head -15 "$OBJ/err-$name.txt" || true
               return 1
             fi
           }
@@ -214,6 +239,8 @@ jobs:
           compile_ws "$WS/request_ios.c" request_ios || true
           compile_ws "$WS/mach_ios.c" mach_ios || true
           compile_ws "$WS/unicode_ios.c" unicode_ios || true
+          compile_ws "$WS/fd_ios.c" fd_ios || true
+          compile_ws "$WS/mapping_ios.c" mapping_ios || true
           NOBJ=$(find "$OBJ" -name '*.o' -type f 2>/dev/null | wc -l | tr -d ' ')
           echo "wineserver-objs=$NOBJ"
           if [ "$NOBJ" -gt 0 ]; then
@@ -268,6 +295,7 @@ jobs:
               sed -i.bak "s|/proc/cpuinfo|$RUNNER_TEMP/fakeproc/cpuinfo|g" "$f" || true
             fi
           done
+          # Match Core.cpp array sizes exactly (hot[12], thr[4]) — not larger stubs
           mkdir -p FEXCore/include
           {
             printf '%s\n' '#pragma once'
@@ -279,8 +307,8 @@ jobs:
             printf '%s\n' '#define IOS_MADEIRA_STUBS_DEFINED'
             printf '%s\n' 'static uint64_t IosCbEntryLog[8] = {};'
             printf '%s\n' 'static uint64_t IosFfsBypassLog[8] = {};'
-            printf '%s\n' 'static volatile uint64_t g_madeira_thr_count[16] = {};'
-            printf '%s\n' 'static volatile uint64_t g_madeira_hot_count[64] = {};'
+            printf '%s\n' 'static volatile uint64_t g_madeira_thr_count[4] = {};'
+            printf '%s\n' 'static volatile uint64_t g_madeira_hot_count[12] = {};'
             printf '%s\n' 'static volatile uint64_t g_madeira_syscall_count[32] = {};'
             printf '%s\n' 'static volatile int g_madeira_ios_host = 1;'
             printf '%s\n' '#endif'
@@ -332,7 +360,7 @@ jobs:
             exit 0
           fi
           echo FEX-MISSING
-          tail -60 "$GITHUB_WORKSPACE/fex-ninja.log" || true
+          tail -80 "$GITHUB_WORKSPACE/fex-ninja.log" || true
           echo "fex_ok=0" >> "$GITHUB_OUTPUT"
           exit 0
 
