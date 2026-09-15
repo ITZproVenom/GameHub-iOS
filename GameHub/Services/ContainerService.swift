@@ -205,10 +205,4 @@ private extension Container {
         copy.lastError = newLastError
         return copy
     }
-
-    func with(modifiedAt date: Date) -> Container {
-        var copy = self
-        copy.modifiedDate = date
-        return copy
-    }
 }
