@@ -12,6 +12,8 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
 targets:
   GameHub:
     type: application
@@ -43,8 +45,6 @@ targets:
           - "$(SRCROOT)/GameHub/Native/Madeira"
         LIBRARY_SEARCH_PATHS:
           - "$(SRCROOT)/GameHub/Native/Madeira/HostLibs"
-          - "$(SRCROOT)/host-libs"
-          - "$(SRCROOT)/host-libs/fex"
         OTHER_LDFLAGS:
           - -framework
           - Metal
@@ -52,7 +52,10 @@ targets:
           - QuartzCore
           - -framework
           - UIKit
+          - -framework
+          - GameController
           - -lz
+          - -lc++
     scheme:
       testTargets:
         - GameHubTests
