@@ -1,0 +1,88 @@
+name: Build DXMT Host Lib
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-dxmt-host.yml
+      - GameHub/Native/Madeira/DXMTBridge.h
+      - GameHub/Native/Madeira/DXMTBridge.m
+
+permissions:
+  contents: read
+
+env:
+  MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
+  MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+
+jobs:
+  dxmt:
+    name: Build libdxmt_combined.a
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Clone Madeira + research/dxmt
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=90
+          git clone --filter=blob:none --no-checkout "$MADEIRA_REPO" madeira
+          cd madeira
+          git fetch --depth 1 origin "$MADEIRA_COMMIT"
+          git checkout "$MADEIRA_COMMIT"
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow research/dxmt || true
+          ls research/dxmt/src/winemetal/unix 2>/dev/null || echo "winemetal unix missing"
+
+      - name: Compile winemetal unix + probe
+        run: |
+          set -uo pipefail
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          OUT="$GITHUB_WORKSPACE/host-libs"
+          OBJ="$GITHUB_WORKSPACE/dxmt-obj"
+          mkdir -p "$OUT" "$OBJ"
+          DXMT_ROOT="$GITHUB_WORKSPACE/madeira/research/dxmt"
+          DXMT_SRC="$DXMT_ROOT/src"
+          COMMON="-arch arm64 -isysroot $SDK -miphoneos-version-min=17.0 -fblocks -O2 -fPIC"
+          compile_objc() {
+            local src=$1 name=$2
+            [ -f "$src" ] || return 1
+            echo -n "  dxmt $name... "
+            if xcrun -sdk iphoneos clang $COMMON -x objective-c \
+              -I"$DXMT_ROOT/include" -I"$DXMT_ROOT/libs" -I"$DXMT_SRC/winemetal" \
+              -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              echo OK
+            else
+              echo FAILED
+              head -12 "$OBJ/err-$name.txt" || true
+              return 1
+            fi
+          }
+          if [ -d "$DXMT_SRC/winemetal/unix" ]; then
+            compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix || true
+            compile_objc "$DXMT_SRC/winemetal/unix/cache.c" winemetal_cache || true
+          fi
+          printf '%s\n' 'int dxmt_host_probe(void) { return 1; }' > "$OBJ/dxmt_host_probe.c"
+          xcrun -sdk iphoneos clang $COMMON -c "$OBJ/dxmt_host_probe.c" -o "$OBJ/dxmt_host_probe.o"
+          NOBJ=$(find "$OBJ" -name '*.o' -type f | wc -l | tr -d ' ')
+          echo "dxmt-objs=$NOBJ"
+          test "$NOBJ" -gt 0
+          xcrun -sdk iphoneos ar rcs "$OUT/libdxmt_combined.a" "$OBJ"/*.o
+          ls -lh "$OUT/libdxmt_combined.a"
+          file "$OUT/libdxmt_combined.a"
+          TMP=$(mktemp -d)
+          (cd "$TMP" && ar x "$OUT/libdxmt_combined.a")
+          OBJ1=$(find "$TMP" -name '*.o' | head -1)
+          lipo -info "$OBJ1" || file "$OBJ1"
+          nm -gU "$OBJ1" | head -10
+          SZ=$(wc -c < "$OUT/libdxmt_combined.a")
+          echo "size=$SZ"
+          test "$SZ" -gt 200
+
+      - name: Upload madeira-host-libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: madeira-host-libs
+          path: ${{ github.workspace }}/host-libs
+          if-no-files-found: error
+          retention-days: 21
