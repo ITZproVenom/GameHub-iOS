@@ -3,8 +3,8 @@ import Metal
 import QuartzCore
 
 /// Mirrors Madeira wineserver + wine_process boot order.
-/// Real PE execution requires strong symbols from Madeira static libraries.
-/// Without them, bridges return failure — never reports fake success.
+/// Real PE execution requires JIT (CS_DEBUGGED) + Madeira static host libraries.
+/// Without JIT, the app still manages library / prefix / config; launch refuses honestly.
 enum MadeiraBootSequence {
 
     enum Step: String {
@@ -22,6 +22,13 @@ enum MadeiraBootSequence {
         let message: String
     }
 
+    /// User-facing explanation when JIT is not available.
+    static let noJITUserMessage =
+        "JIT is not enabled on this device. "
+        + "Library, import, and prefix management still work, but x86-64 game execution "
+        + "requires a JIT debugger (StikDebug / StikJIT / TrollStore). "
+        + "Attach one, then launch again."
+
     /// Register the CAMetalLayer DXMT will present into.
     static func attachMetalLayer(_ layer: CAMetalLayer) {
         madeira_display_set_layer(layer)
@@ -32,7 +39,6 @@ enum MadeiraBootSequence {
     }
 
     /// Ensure a prefix directory exists and is seeded from the bundled template.
-    /// If `preferredPrefix` is provided (per-game container), use it; otherwise Documents/wine.
     static func ensurePrefix(preferredPrefix: URL? = nil) -> (path: String, error: String?) {
         let prefix: URL
         if let preferredPrefix {
@@ -69,21 +75,27 @@ enum MadeiraBootSequence {
     }
 
     /// Full host boot against a specific prefix (and optional executable).
-    /// Returns only ok=true if `wine_process_is_running()` becomes true.
+    /// If JIT is unavailable, returns a clear failure without starting Wine/FEX
+    /// and without claiming the game launched.
     static func runFullSequence(
         prefixURL: URL? = nil,
         executableURL: URL? = nil
     ) -> Outcome {
+        // Always install trap handler so a later JIT attach can use it
         jit_install_trap_handler()
 
+        // --- NO-JIT graceful path ---
+        // Do not pretend to launch. Do not start a fake interpreter.
+        // Library / import / prefix already work without this step.
         guard jit_check_debugged() else {
             return Outcome(
                 ok: false,
                 failedStep: .jitCheck,
-                message: "CS_DEBUGGED not set. Enable JIT (StikDebug/StikJIT) before Wine/FEX."
+                message: noJITUserMessage
             )
         }
 
+        // JIT is available → primary FEX/Wine path
         if !fex_initialize() {
             NSLog("[GameHub] fex_initialize returned false (libFEXCore may be missing)")
         }
@@ -93,7 +105,6 @@ enum MadeiraBootSequence {
             NSLog("[GameHub] prefix: \(err)")
         }
 
-        // If we have a specific .exe, copy/link it into the prefix drive_c for Wine to find
         if let exe = executableURL {
             placeExecutableInPrefix(exe: exe, prefixPath: prefix.path)
         }
@@ -144,7 +155,6 @@ enum MadeiraBootSequence {
         )
     }
 
-    /// Copy the imported .exe into the prefix's drive_c so Wine can resolve it.
     private static func placeExecutableInPrefix(exe: URL, prefixPath: String) {
         let fm = FileManager.default
         let driveC = URL(fileURLWithPath: prefixPath).appendingPathComponent("drive_c", isDirectory: true)
@@ -153,7 +163,6 @@ enum MadeiraBootSequence {
         if fm.fileExists(atPath: dest.path) {
             try? fm.removeItem(at: dest)
         }
-        // Hard-link when possible (same volume); else copy
         do {
             try fm.linkItem(at: exe, to: dest)
         } catch {
