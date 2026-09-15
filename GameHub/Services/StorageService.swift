@@ -7,6 +7,7 @@ enum StorageError: LocalizedError, Sendable {
     case fileNotFound(String)
     case fileCopyFailed(String)
     case quotaExceeded
+    case unreadableSource(String)
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ enum StorageError: LocalizedError, Sendable {
         case .fileNotFound(let msg): return "File not found: \(msg)"
         case .fileCopyFailed(let msg): return "Failed to copy file: \(msg)"
         case .quotaExceeded: return "Storage quota exceeded"
+        case .unreadableSource(let msg): return "Cannot read source file: \(msg)"
         }
     }
 }
@@ -129,19 +131,55 @@ final class StorageService: @unchecked Sendable {
 
     // MARK: - File Operations
 
+    /// Copy a user-selected file (often security-scoped from the document picker)
+    /// into the app's Games library. Preserves the original filename, including
+    /// spaces and non-ASCII characters. Caller must hold the security scope
+    /// for `sourceURL` while this method runs.
     func copyFileToLibrary(sourceURL: URL, gameID: UUID) throws -> URL {
         try ensureBaseStructure()
 
         let gameDir = gamesDirectory.appendingPathComponent(gameID.uuidString, isDirectory: true)
         try fileManager.createDirectory(at: gameDir, withIntermediateDirectories: true)
 
-        let destURL = gameDir.appendingPathComponent(sourceURL.lastPathComponent)
+        // Preserve original filename (spaces, unicode, etc.)
+        let originalName = sourceURL.lastPathComponent
+        guard !originalName.isEmpty else {
+            throw StorageError.fileCopyFailed("Source has empty filename")
+        }
+
+        let destURL = gameDir.appendingPathComponent(originalName)
 
         if fileManager.fileExists(atPath: destURL.path) {
             try fileManager.removeItem(at: destURL)
         }
 
-        try fileManager.copyItem(at: sourceURL, to: destURL)
+        // Prefer coordinated / streaming copy so large .exe files and
+        // security-scoped providers (iCloud, Files providers) work reliably.
+        var copyError: Error?
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(readingItemAt: sourceURL, options: [], error: nil) { readableURL in
+            do {
+                // First try native copy (fast path when both sides are local)
+                try self.fileManager.copyItem(at: readableURL, to: destURL)
+            } catch {
+                // Fallback: read all data then write (works across providers)
+                do {
+                    let data = try Data(contentsOf: readableURL, options: [.mappedIfSafe])
+                    try data.write(to: destURL, options: .atomic)
+                } catch {
+                    copyError = error
+                }
+            }
+        }
+
+        if let copyError {
+            throw StorageError.fileCopyFailed(copyError.localizedDescription)
+        }
+
+        guard fileManager.fileExists(atPath: destURL.path) else {
+            throw StorageError.fileCopyFailed("Destination missing after copy")
+        }
+
         return destURL
     }
 
