@@ -66,7 +66,6 @@ jobs:
           [[ -d app/Madeira/nls ]] && cp -R app/Madeira/nls "$RT/" || true
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
-          # Real Madeira bridge sources (strong symbols override HostWeakStubs)
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
           for f in WineServerBridge.m WineProcessBridge.m FEXBridge.mm IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
             if [[ -f "app/Madeira/$f" ]]; then
@@ -107,11 +106,9 @@ jobs:
           echo "=== HostLibs ==="
           ls -lh "$HL" 2>/dev/null || echo "(empty)"
           {
-            echo "host_libs_present=0"
-            for lib in libntdll_unix.a libwineserver.a libFEXCore.a libdxmt_combined.a; do
-              if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
+            for lib in libntdll_unix.a libwineserver.a libFEXCore.a libdxmt_combined.a libfmt.a libxxhash.a libsoftfloat_3e.a; do
+              if [[ -s "$HL/$lib" ]]; then
                 echo "  FOUND $lib $(wc -c < "$HL/$lib")"
-                echo "host_libs_present=1" >> "$GITHUB_ENV"
               fi
             done
           } | tee "$HL/STATUS.txt" || true
@@ -135,10 +132,10 @@ jobs:
           set -euo pipefail
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
           EXTRA_LD=""
-          for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a; do
+          for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a libsoftfloat_3e.a libcephes_128bit.a; do
             if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt 50000 ]]; then
               EXTRA_LD="$EXTRA_LD -force_load $HL/$lib"
-              echo "force_load $lib"
+              echo "force_load $lib ($(wc -c < "$HL/$lib") bytes)"
             fi
           done
           xcodebuild archive \
@@ -221,9 +218,9 @@ jobs:
           RUN="${{ github.run_number }}"
           SIZE=$(ls -lh build/GameHub.ipa | awk '{print $5}')
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
-          HOST_STATUS="stubs only (host CI not yet producing .a)"
+          HOST_STATUS="no host .a"
           if ls "$HL"/*.a 1>/dev/null 2>&1; then
-            HOST_STATUS="partial host libs: $(ls "$HL"/*.a 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
+            HOST_STATUS="$(ls "$HL"/*.a 2>/dev/null | xargs -n1 basename | tr '\n' ' ')"
           fi
           echo "tag=ios-runtime-${STAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "name=GameHub iOS + Madeira runtime #${RUN} (${SHORT_SHA})" >> "$GITHUB_OUTPUT"
@@ -233,9 +230,9 @@ jobs:
             echo "**Build:** \`${SHORT_SHA}\`"
             echo "**IPA size:** ${SIZE}"
             echo "**Madeira:** \`${MADEIRA_COMMIT}\`"
-            echo "**Host libs:** ${HOST_STATUS}"
+            echo "**Host libs linked:** ${HOST_STATUS}"
             echo ""
-            echo "PE sysroots + prefix-template + PrefixExtractor + Madeira bridge sources."
+            echo "PE sysroots + prefix-template + bridges + host static libs when available."
             echo ""
             echo "### Install"
             echo "Unsigned — **AltStore** / **Sideloadly** / **TrollStore** + JIT (StikDebug)."
