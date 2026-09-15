@@ -14,6 +14,11 @@
  * even when the Madeira wineserver archive is not linked. */
 volatile int ws_log_quiet = 0;
 
+/* Weak definition so FEXBridge.mm can probe FEXCore without a hard link error. */
+__attribute__((weak)) int fex_core_probe(void) {
+    return 0;
+}
+
 __attribute__((weak)) int wineserver_main(int argc, char *argv[]) {
     (void)argc; (void)argv;
     fprintf(stderr, "[GameHub] wineserver_main: libwineserver.a not linked\n");
