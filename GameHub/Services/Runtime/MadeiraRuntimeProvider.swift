@@ -21,13 +21,11 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
     }
 
     func integrationReport() -> RuntimeIntegrationReport {
-        // Host is the linked bridges, not PE alone.
         let hasSysroot: Bool = {
             guard let bundle = bundleLayout() else { return false }
             return bundle.missingMarkers().isEmpty && bundle.missingPE().isEmpty
         }()
         let version = bundleLayout()?.readVersion() ?? "host"
-        // Strong wine symbols override weak stubs; we only know at runtime.
         return .sysrootReady(version: version, missingHost: false)
     }
 
@@ -58,14 +56,17 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         environment: [String: String],
         config: RuntimeConfig
     ) async -> LaunchResult {
-        _ = executableURL
-        _ = prefixURL
         _ = arguments
         _ = environment
         _ = config
 
-        // Madeira path: Metal layer must already be registered by UI if presenting.
-        let outcome = MadeiraBootSequence.runFullSequence()
+        // Place the selected .exe into the game's Wine prefix and boot
+        // wineserver → wine_process. Metal layer must already be registered by UI.
+        let outcome = MadeiraBootSequence.runFullSequence(
+            prefixURL: prefixURL,
+            executableURL: executableURL
+        )
+
         if outcome.ok {
             return .success
         }
