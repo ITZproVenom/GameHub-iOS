@@ -19,6 +19,12 @@ extern "C" {
     // Weak hook: a later Madeira FEX host object can override by providing
     // a strong fex_core_probe() that returns non-zero when FEXCore is live.
     int fex_core_probe(void) __attribute__((weak));
+
+    // Declared here as well as in JITAllocator.h. The IPA workflow may copy
+    // Madeira's JITAllocator.h, which historically omitted this prototype.
+    int64_t jit_get_write_offset(void);
+    int64_t jit_test_execute(void);
+    bool jit_test_mapping(void);
 }
 
 bool fex_initialize(void) {
@@ -55,6 +61,5 @@ void fex_set_log_callback(fex_log_callback_t callback) {
 }
 
 int64_t fex_get_jit_write_offset(void) {
-    // C symbol from JITAllocator.c — must not use C++ linkage.
     return jit_get_write_offset();
 }
