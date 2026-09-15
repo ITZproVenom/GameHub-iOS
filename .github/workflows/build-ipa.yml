@@ -67,12 +67,14 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          for f in WineServerBridge.m WineProcessBridge.m IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
+          # Keep GameHub WineProcessBridge / FEXBridge / HostWeakStubs — they carry
+          # imported-exe launch + iOS link stubs. Copy the rest of Madeira bridges.
+          for f in WineServerBridge.m IOSDisplayShim.m JITAllocator.c PrefixExtractor.c; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
-          for f in WineServerBridge.h WineProcessBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
+          for f in WineServerBridge.h IOSDisplayShim.h JITAllocator.h PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
@@ -150,9 +152,6 @@ jobs:
               OTHER_LDFLAGS="$extra $BASE_LD"
           }
 
-          # Prefer host libs that are known to exist; FEXCore often has unresolved
-          # symbols until FEX headers/bridges are vendored. Try full set first,
-          # then drop FEXCore*, then drop all force_loads. Never invent an IPA.
           FULL=""
           NOFEX=""
           for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a libsoftfloat_3e.a libcephes_128bit.a; do
