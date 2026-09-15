@@ -35,13 +35,15 @@ static os_log_t wine_proc_log(void) {
 
 #define LOG(fmt, ...) os_log(wine_proc_log(), "[WineProc] " fmt, ##__VA_ARGS__)
 
-// Strong symbol when libntdll_unix.a is force_loaded; weak stub otherwise.
 extern void __wine_main(int argc, char *argv[]) __attribute__((weak));
 extern void wine_log_set_file(const char *path) __attribute__((weak));
+extern void wineserver_inject_client_fd(int fd) __attribute__((weak));
+extern void winios_freeze_watch_start(void) __attribute__((weak));
 
 static pthread_t g_wine_thread;
 static volatile int g_wine_running = 0;
 static char *g_prefix_path = NULL;
+static char *g_exe_winpath = NULL;
 
 void madeira_seed_prefix_if_needed(const char *prefix_path) {
     @autoreleasepool {
@@ -53,7 +55,6 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         [fm createDirectoryAtPath:prefix withIntermediateDirectories:YES attributes:nil error:nil];
 
         if (![fm fileExistsAtPath:stamp]) {
-            // Prefer Runtime/ subdir (force-embedded by IPA packaging)
             NSString *tgz = [[NSBundle mainBundle] pathForResource:@"prefix-template" ofType:@"tar.gz" inDirectory:@"Runtime"];
             if (!tgz) tgz = [[NSBundle mainBundle] pathForResource:@"prefix-template" ofType:@"tar.gz"];
             if (!tgz) {
@@ -69,7 +70,6 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
             }
         }
 
-        // (Re)create dosdevices/c: -> ../drive_c
         NSString *dosdev = [prefix stringByAppendingPathComponent:@"dosdevices"];
         [fm createDirectoryAtPath:dosdev withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *cLink = [dosdev stringByAppendingPathComponent:@"c:"];
@@ -101,7 +101,6 @@ static void *wine_process_thread(void *arg) {
             }
         }
 
-        // Publish JIT write offset for xtajit64 if FEX is present
         {
             int64_t off = fex_get_jit_write_offset();
             if (off != 0) {
@@ -109,6 +108,10 @@ static void *wine_process_thread(void *arg) {
                 snprintf(buf, sizeof(buf), "%lld", (long long)off);
                 setenv("MADEIRA_JIT_WRITE_OFFSET", buf, 1);
             }
+        }
+
+        if (winios_freeze_watch_start) {
+            winios_freeze_watch_start();
         }
 
         if (__wine_main == NULL) {
@@ -123,10 +126,11 @@ static void *wine_process_thread(void *arg) {
             wine_log_set_file(logPath.UTF8String);
         }
 
-        char *argv[] = { "wine", "explorer.exe", NULL };
+        const char *target = (g_exe_winpath && g_exe_winpath[0]) ? g_exe_winpath : "explorer.exe";
+        char *argv[] = { "wine", (char *)target, NULL };
         int argc = 2;
 
-        LOG("Calling __wine_main (explorer.exe) ...");
+        LOG("Calling __wine_main (%{public}s) ...", target);
         wine_ios_exit_initialized = 1;
         wine_ios_main_thread = pthread_self();
         if (setjmp(wine_ios_exit_jmpbuf) == 0) {
@@ -138,7 +142,7 @@ static void *wine_process_thread(void *arg) {
     return NULL;
 }
 
-int wine_process_start(const char *prefix_path) {
+static int wine_process_start_common(const char *prefix_path) {
     if (g_wine_running) {
         LOG("Wine process already running");
         return 0;
@@ -148,7 +152,6 @@ int wine_process_start(const char *prefix_path) {
     if (g_prefix_path) free(g_prefix_path);
     g_prefix_path = strdup(prefix_path);
 
-    // Ensure wineserver is up first
     if (wineserver_is_running() == 0) {
         LOG("wineserver not running — starting it");
         if (wineserver_start(prefix_path) != 0) {
@@ -178,6 +181,22 @@ int wine_process_start(const char *prefix_path) {
     }
     LOG("Wine process thread created");
     return 0;
+}
+
+int wine_process_start(const char *prefix_path) {
+    return wine_process_start_common(prefix_path);
+}
+
+int wine_process_start_exe(const char *prefix_path, const char *exe_path) {
+    if (g_exe_winpath) {
+        free(g_exe_winpath);
+        g_exe_winpath = NULL;
+    }
+    if (exe_path && exe_path[0]) {
+        g_exe_winpath = strdup(exe_path);
+        LOG("wine_process_start_exe target=%{public}s", exe_path);
+    }
+    return wine_process_start_common(prefix_path);
 }
 
 int wine_process_is_running(void) {
