@@ -54,6 +54,10 @@ targets:
           - UIKit
           - -framework
           - GameController
+          - -framework
+          - AVFoundation
+          - -framework
+          - AudioToolbox
           - -lz
           - -lc++
     scheme:

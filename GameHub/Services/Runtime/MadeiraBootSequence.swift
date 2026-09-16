@@ -93,7 +93,11 @@ enum MadeiraBootSequence {
         }
 
         if !fex_initialize() {
-            NSLog("[GameHub] fex_initialize returned false (libFEXCore may be missing)")
+            return Outcome(
+                ok: false,
+                failedStep: .fexInit,
+                message: "fex_initialize failed. JIT is present but libFEXCore.a did not probe. Cannot translate x86-64."
+            )
         }
 
         if !dxmt_initialize() {
