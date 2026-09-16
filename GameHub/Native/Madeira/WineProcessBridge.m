@@ -4,6 +4,8 @@
 
 #import <Foundation/Foundation.h>
 #import <os/log.h>
+#import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <pthread.h>
 #import <unistd.h>
 #import <fcntl.h>
@@ -88,16 +90,41 @@ static void *wine_process_thread(void *arg) {
         setenv("WINEPREFIX", g_prefix_path, 1);
         setenv("HOME", g_prefix_path, 1);
         setenv("WINELOADERNOEXEC", "1", 1);
+        /* DXMT is the D3D11/12 → Metal path. Prefer it over wined3d. */
+        setenv("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d10,d3d10_1,d3d10core=n,b", 1);
+        setenv("DXMT_CONFIG", "d3d11.presentInterval=0", 1);
 
         {
+            NSFileManager *fm = [NSFileManager defaultManager];
             NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-            NSString *rt = [bundlePath stringByAppendingPathComponent:@"Runtime"];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:rt]) {
-                setenv("WINEDLLPATH", rt.UTF8String, 1);
-                LOG("WINEDLLPATH=%{public}s", rt.UTF8String);
-            } else {
-                setenv("WINEDLLPATH", bundlePath.UTF8String, 1);
-                LOG("WINEDLLPATH=%{public}s (no Runtime/)", bundlePath.UTF8String);
+            NSMutableArray<NSString *> *dllDirs = [NSMutableArray array];
+            NSArray<NSString *> *candidates = @[
+                [bundlePath stringByAppendingPathComponent:@"Runtime/arm64ec-windows"],
+                [bundlePath stringByAppendingPathComponent:@"Runtime/aarch64-windows"],
+                [bundlePath stringByAppendingPathComponent:@"Runtime"],
+                bundlePath,
+            ];
+            for (NSString *p in candidates) {
+                if ([fm fileExistsAtPath:p]) {
+                    [dllDirs addObject:p];
+                }
+            }
+            NSString *joined = [dllDirs componentsJoinedByString:@":"];
+            setenv("WINEDLLPATH", joined.UTF8String, 1);
+            LOG("WINEDLLPATH=%{public}s", joined.UTF8String);
+        }
+
+        {
+            /* Activate the audio session so Madeira's RemoteIO path can open. */
+            NSError *audioErr = nil;
+            AVAudioSession *session = [AVAudioSession sharedInstance];
+            [session setCategory:AVAudioSessionCategoryPlayback
+                            mode:AVAudioSessionModeDefault
+                         options:AVAudioSessionCategoryOptionMixWithOthers
+                           error:&audioErr];
+            [session setActive:YES error:&audioErr];
+            if (audioErr) {
+                LOG("AVAudioSession: %{public}@", audioErr);
             }
         }
 
