@@ -46,6 +46,7 @@ final class AppState: ObservableObject {
 
         let runtime = RuntimeService()
         self.runtimeService = runtime
+        RuntimeServiceHolder.shared = runtime
 
         let logs = LogService()
         self.logService = logs
