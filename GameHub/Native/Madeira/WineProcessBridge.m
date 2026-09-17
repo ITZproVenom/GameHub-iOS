@@ -46,6 +46,8 @@ static pthread_t g_wine_thread;
 static volatile int g_wine_running = 0;
 static char *g_prefix_path = NULL;
 static char *g_exe_winpath = NULL;
+static char *g_extra_args = NULL;
+static char *g_env_block = NULL;
 
 void madeira_seed_prefix_if_needed(const char *prefix_path) {
     @autoreleasepool {
@@ -90,9 +92,21 @@ static void *wine_process_thread(void *arg) {
         setenv("WINEPREFIX", g_prefix_path, 1);
         setenv("HOME", g_prefix_path, 1);
         setenv("WINELOADERNOEXEC", "1", 1);
-        /* DXMT is the D3D11/12 → Metal path. Prefer it over wined3d. */
         setenv("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d10,d3d10_1,d3d10core=n,b", 1);
         setenv("DXMT_CONFIG", "d3d11.presentInterval=0", 1);
+        setenv("DXMT_METAL_LAYER", "1", 1);
+        if (g_env_block && g_env_block[0]) {
+            char *copy = strdup(g_env_block);
+            char *save = NULL;
+            for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+                char *eq = strchr(line, '=');
+                if (!eq || eq == line) continue;
+                *eq = 0;
+                setenv(line, eq + 1, 1);
+                *eq = '=';
+            }
+            free(copy);
+        }
 
         {
             NSFileManager *fm = [NSFileManager defaultManager];
@@ -115,7 +129,6 @@ static void *wine_process_thread(void *arg) {
         }
 
         {
-            /* Activate the audio session so Madeira's RemoteIO path can open. */
             NSError *audioErr = nil;
             AVAudioSession *session = [AVAudioSession sharedInstance];
             [session setCategory:AVAudioSessionCategoryPlayback
@@ -154,8 +167,20 @@ static void *wine_process_thread(void *arg) {
         }
 
         const char *target = (g_exe_winpath && g_exe_winpath[0]) ? g_exe_winpath : "explorer.exe";
-        char *argv[] = { "wine", (char *)target, NULL };
-        int argc = 2;
+        char *argv_buf[32];
+        int argc_fill = 0;
+        argv_buf[argc_fill++] = "wine";
+        argv_buf[argc_fill++] = (char *)target;
+        if (g_extra_args && g_extra_args[0]) {
+            char *acopy = strdup(g_extra_args);
+            char *save = NULL;
+            for (char *tok = strtok_r(acopy, " ", &save); tok && argc_fill < 30; tok = strtok_r(NULL, " ", &save)) {
+                argv_buf[argc_fill++] = tok;
+            }
+        }
+        argv_buf[argc_fill] = NULL;
+        char **argv = argv_buf;
+        int argc = argc_fill;
 
         LOG("Calling __wine_main (%{public}s) ...", target);
         wine_ios_exit_initialized = 1;
@@ -208,6 +233,13 @@ static int wine_process_start_common(const char *prefix_path) {
     }
     LOG("Wine process thread created");
     return 0;
+}
+
+void wine_process_configure(const char *extra_args, const char *env_block) {
+    if (g_extra_args) { free(g_extra_args); g_extra_args = NULL; }
+    if (g_env_block) { free(g_env_block); g_env_block = NULL; }
+    if (extra_args && extra_args[0]) g_extra_args = strdup(extra_args);
+    if (env_block && env_block[0]) g_env_block = strdup(env_block);
 }
 
 int wine_process_start(const char *prefix_path) {
