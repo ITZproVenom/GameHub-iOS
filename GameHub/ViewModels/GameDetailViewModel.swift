@@ -11,6 +11,7 @@ final class GameDetailViewModel: ObservableObject {
     @Published var artworkImage: UIImage?
     @Published var artworkLoading = false
     @Published var isLaunching = false
+    @Published var isPlaying = false
     @Published var errorMessage: String?
     @Published var jitReady: Bool = false
 
@@ -68,6 +69,12 @@ final class GameDetailViewModel: ObservableObject {
         gameService.updateGame(game)
     }
 
+    func stopSession() async {
+        isPlaying = false
+        MetalHostView.shared.uninstall()
+        await runtimeService.stopAll()
+    }
+
     func launch() async {
         isLaunching = true
         errorMessage = nil
@@ -85,8 +92,6 @@ final class GameDetailViewModel: ObservableObject {
             return
         }
 
-        // NO-JIT: still call launch — provider returns entitlementRequired with clear text.
-        // We never claim success without a real running Wine process.
         let result = await runtimeService.launchGame(
             game: game,
             executableURL: game.executableURL,
@@ -98,12 +103,12 @@ final class GameDetailViewModel: ObservableObject {
         case .success, .successLaunched:
             gameService.recordPlay(gameID: game.id)
             game.lastPlayed = Date()
+            isPlaying = true
         case .runtimeNotInstalled:
             errorMessage = "The runtime is not installed."
         case .binaryMissing(let msg):
             errorMessage = msg
         case .entitlementRequired(let msg):
-            // Primary user-facing NO-JIT message
             errorMessage = msg
         case .unsupported(let msg):
             errorMessage = msg
