@@ -32,7 +32,6 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         if MadeiraBootSequence.isJITReady() {
             return .installed(version: "\(version) · JIT ready")
         }
-        // App remains usable; only execution is blocked.
         return .error(
             "JIT required for x86-64 execution. "
             + "Attach StikDebug / StikJIT / TrollStore, then relaunch. "
@@ -61,15 +60,13 @@ final class MadeiraRuntimeProvider: RuntimeProvider, @unchecked Sendable {
         environment: [String: String],
         config: RuntimeConfig
     ) async -> LaunchResult {
-        _ = arguments
-        _ = environment
         _ = config
 
-        // Primary path: full FEX JIT when available.
-        // NO-JIT: MadeiraBootSequence returns entitlementRequired — never fake success.
         let outcome = MadeiraBootSequence.runFullSequence(
             prefixURL: prefixURL,
-            executableURL: executableURL
+            executableURL: executableURL,
+            arguments: arguments,
+            environment: environment
         )
 
         if outcome.ok {
