@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Metal
 import QuartzCore
 
@@ -23,14 +24,12 @@ enum MadeiraBootSequence {
         let message: String
     }
 
-    /// User-facing explanation when JIT is not available.
     static let noJITUserMessage =
         "JIT is not enabled on this device. "
         + "Library, import, and prefix management still work, but x86-64 game execution "
         + "requires a JIT debugger (StikDebug / StikJIT / TrollStore). "
         + "Attach one, then launch again."
 
-    /// Register the CAMetalLayer DXMT will present into.
     static func attachMetalLayer(_ layer: CAMetalLayer) {
         madeira_display_set_layer(layer)
     }
@@ -39,7 +38,6 @@ enum MadeiraBootSequence {
         jit_check_debugged()
     }
 
-    /// Ensure a prefix directory exists and is seeded from the bundled template.
     static func ensurePrefix(preferredPrefix: URL? = nil) -> (path: String, error: String?) {
         let prefix: URL
         if let preferredPrefix {
@@ -75,14 +73,30 @@ enum MadeiraBootSequence {
         return (prefix.path, nil)
     }
 
-    /// Full host boot against a specific prefix (and optional executable).
-    /// If JIT is unavailable, returns a clear failure without starting Wine/FEX
-    /// and without claiming the game launched.
+    static func bindPresentationLayerIfPossible() {
+        let work = {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let window = scenes.flatMap { $0.windows }.first { $0.isKeyWindow } ?? scenes.first?.windows.first
+            guard let window else { return }
+            MetalHostView.shared.install(on: window, frame: window.bounds)
+            MetalHostView.shared.isHidden = false
+            window.bringSubviewToFront(MetalHostView.shared)
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
+        }
+    }
+
     static func runFullSequence(
         prefixURL: URL? = nil,
-        executableURL: URL? = nil
+        executableURL: URL? = nil,
+        arguments: [String] = [],
+        environment: [String: String] = [:]
     ) -> Outcome {
         jit_install_trap_handler()
+        bindPresentationLayerIfPossible()
 
         guard jit_check_debugged() else {
             return Outcome(
@@ -141,6 +155,10 @@ enum MadeiraBootSequence {
                 message: "wineserver thread never became ready"
             )
         }
+
+        let extra = arguments.joined(separator: " ")
+        let envBlock = environment.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        wine_process_configure(extra.isEmpty ? nil : extra, envBlock.isEmpty ? nil : envBlock)
 
         let wp: Int32
         if let win = placedWinPath {
