@@ -70,8 +70,6 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          # Never overlay IOSDisplayShim — GameHub defines winios_metal_layer_for_hwnd.
-          # Madeira's file only references that symbol (from my_view_create_metal_view).
           echo "Keeping GameHub IOSDisplayShim.m/.h (do not copy Madeira display shim)"
           for f in WineServerBridge.m PrefixExtractor.c WineServerBridge.h PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
@@ -154,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           HL="$GITHUB_WORKSPACE/GameHub/Native/Madeira/HostLibs"
-          BASE_LD="-framework Metal -framework QuartzCore -framework UIKit -framework GameController -lz -lc++"
+          BASE_LD="-framework Metal -framework QuartzCore -framework UIKit -framework GameController -framework AVFoundation -framework AudioToolbox -lz -lc++"
 
           archive_with() {
             local extra="$1"
