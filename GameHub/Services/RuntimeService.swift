@@ -64,3 +64,11 @@ actor RuntimeService {
         }
     }
 }
+
+enum RuntimeServiceHolder {
+    static var shared: RuntimeService?
+
+    static func stop() async {
+        await shared?.stopAll()
+    }
+}
