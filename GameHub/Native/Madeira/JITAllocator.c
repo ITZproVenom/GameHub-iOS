@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <mach/mach.h>
@@ -180,7 +181,6 @@ bool jit_test_mapping(void) {
         jlog("jit_test_mapping: dual_map failed");
         return false;
     }
-    /* ARM64: RET encoded as 0xD65F03C0 */
     uint32_t ret = 0xD65F03C0u;
     void *fn = jit_region_write(r, 0, &ret, sizeof(ret));
     jit_region_destroy(r);
@@ -196,7 +196,6 @@ int64_t jit_test_execute(void) {
     if (!jit_check_debugged()) return -2;
     JITRegion *r = jit_region_create((size_t)getpagesize());
     if (!r) return -1;
-    /* mov w0, #42 ; ret */
     uint32_t code[2] = { 0x52800540u, 0xD65F03C0u };
     int (*fn)(void) = (int (*)(void))jit_region_write(r, 0, code, sizeof(code));
     int64_t rc = -1;
