@@ -82,7 +82,28 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
     }
 }
 
+static int split_quoted(char *src, char **out, int maxn) {
+    int n = 0;
+    char *p = src;
+    while (*p && n < maxn) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        if (*p == '"' || *p == '\'') {
+            char q = *p++;
+            out[n++] = p;
+            while (*p && *p != q) p++;
+            if (*p) *p++ = 0;
+        } else {
+            out[n++] = p;
+            while (*p && *p != ' ' && *p != '\t') p++;
+            if (*p) *p++ = 0;
+        }
+    }
+    return n;
+}
+
 static void *wine_process_thread(void *arg) {
+    (void)arg;
     @autoreleasepool {
         pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
         LOG("Wine process thread started");
@@ -118,6 +139,10 @@ static void *wine_process_thread(void *arg) {
                 [bundlePath stringByAppendingPathComponent:@"Runtime"],
                 bundlePath,
             ];
+            if (g_prefix_path) {
+                NSString *prefix = [NSString stringWithUTF8String:g_prefix_path];
+                [dllDirs addObject:[prefix stringByAppendingPathComponent:@"drive_c/windows/system32"]];
+            }
             for (NSString *p in candidates) {
                 if ([fm fileExistsAtPath:p]) {
                     [dllDirs addObject:p];
@@ -173,16 +198,13 @@ static void *wine_process_thread(void *arg) {
         argv_buf[argc_fill++] = (char *)target;
         if (g_extra_args && g_extra_args[0]) {
             char *acopy = strdup(g_extra_args);
-            char *save = NULL;
-            for (char *tok = strtok_r(acopy, " ", &save); tok && argc_fill < 30; tok = strtok_r(NULL, " ", &save)) {
-                argv_buf[argc_fill++] = tok;
-            }
+            argc_fill += split_quoted(acopy, &argv_buf[argc_fill], 30 - argc_fill);
         }
         argv_buf[argc_fill] = NULL;
         char **argv = argv_buf;
         int argc = argc_fill;
 
-        LOG("Calling __wine_main (%{public}s) ...", target);
+        LOG("Calling __wine_main (%{public}s) argc=%d ...", target, argc);
         wine_ios_exit_initialized = 1;
         wine_ios_main_thread = pthread_self();
         if (setjmp(wine_ios_exit_jmpbuf) == 0) {
