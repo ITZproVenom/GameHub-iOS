@@ -70,21 +70,13 @@ jobs:
           printf '%s\nMadeira PE+prefix bundle\n' "$MADEIRA_COMMIT" > "$RT/VERSION"
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
-          echo "Keeping GameHub IOSDisplayShim.m/.h (do not copy Madeira display shim)"
-          for f in WineServerBridge.m PrefixExtractor.c WineServerBridge.h PrefixExtractor.h; do
+          echo "Keeping GameHub iOS bridges (WineServer/WineProcess/FEX/JIT/IOSDisplay)"
+          # Only overlay PrefixExtractor when Madeira provides it (pure C, portable).
+          for f in PrefixExtractor.c PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
             fi
           done
-
-          if [[ -f app/Madeira/JITAllocator.c ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.c; then
-            cp -v app/Madeira/JITAllocator.c "$NAT/JITAllocator.c"
-            if [[ -f app/Madeira/JITAllocator.h ]] && grep -q 'jit_get_write_offset' app/Madeira/JITAllocator.h; then
-              cp -v app/Madeira/JITAllocator.h "$NAT/JITAllocator.h"
-            fi
-          else
-            echo "Keeping GameHub JITAllocator (Madeira copy missing jit_get_write_offset)"
-          fi
 
           echo "=== Runtime payload ==="
           du -sh "$RT"
