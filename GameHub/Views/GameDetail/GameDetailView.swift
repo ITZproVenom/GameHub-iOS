@@ -246,8 +246,8 @@ struct GameDetailView: View {
         sectionCard(title: "Per-Game Settings") {
             VStack(spacing: 12) {
                 infoRow("Windows Version", value: viewModel.game.runtimeConfig.windowsVersion.displayName)
-                infoRow("DXVK (D3D11\u2192Vulkan)", value: viewModel.game.runtimeConfig.dxvkEnabled ? "Enabled" : "Disabled")
-                infoRow("DXMT (D3D11\u2192Metal)", value: viewModel.game.runtimeConfig.dxmtEnabled ? "Enabled" : "Disabled")
+                infoRow("DXVK (D3D11->Vulkan)", value: viewModel.game.runtimeConfig.dxvkEnabled ? "Enabled" : "Disabled")
+                infoRow("DXMT (D3D11->Metal)", value: viewModel.game.runtimeConfig.dxmtEnabled ? "Enabled" : "Disabled")
                 infoRow("MSVCRT", value: viewModel.game.runtimeConfig.mscvrtEnabled ? "Enabled" : "Disabled")
                 if !viewModel.game.launchArguments.isEmpty {
                     infoRow("Launch Arguments", value: viewModel.game.launchArguments.joined(separator: " "))
