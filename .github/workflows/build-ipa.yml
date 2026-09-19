@@ -71,7 +71,6 @@ jobs:
 
           NAT="$GITHUB_WORKSPACE/GameHub/Native/Madeira"
           echo "Keeping GameHub iOS bridges (WineServer/WineProcess/FEX/JIT/IOSDisplay)"
-          # Only overlay PrefixExtractor when Madeira provides it (pure C, portable).
           for f in PrefixExtractor.c PrefixExtractor.h; do
             if [[ -f "app/Madeira/$f" ]]; then
               cp -v "app/Madeira/$f" "$NAT/$f"
@@ -100,7 +99,7 @@ jobs:
             echo "Downloading host-libs from Madeira Host run $RUN_ID"
             mkdir -p /tmp/hl
             gh run download "$RUN_ID" -n madeira-host-libs -D /tmp/hl 2>/dev/null || true
-            find /tmp/hl -name '*.a' -size +200c -exec cp -v {} "$HL/" \; || true
+            find /tmp/hl -name '*.a' -size +40k -exec cp -v {} "$HL/" \; || true
             find /tmp/hl -path '*/fex/*.a' -size +200c -exec cp -v {} "$HL/" \; || true
           fi
           DXMT_RUN=$(gh run list --workflow="Build DXMT Host Lib" --status=success --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
@@ -111,8 +110,8 @@ jobs:
             echo "Downloading DXMT host-libs from run $DXMT_RUN"
             mkdir -p /tmp/dxmt-hl
             gh run download "$DXMT_RUN" -n madeira-host-libs -D /tmp/dxmt-hl 2>/dev/null || true
-            find /tmp/dxmt-hl -name 'libdxmt_combined.a' -size +200c -exec cp -v {} "$HL/" \; || true
-            find /tmp/dxmt-hl -name '*.a' -size +200c -exec cp -v {} "$HL/" \; || true
+            find /tmp/dxmt-hl -name 'libdxmt_combined.a' -size +40k -exec cp -v {} "$HL/" \; || true
+            find /tmp/dxmt-hl -name '*.a' -size +40k -exec cp -v {} "$HL/" \; || true
           fi
           echo "=== HostLibs ==="
           ls -lh "$HL" 2>/dev/null || echo "(empty)"
@@ -166,7 +165,7 @@ jobs:
           for lib in libwineserver.a libntdll_unix.a libwin32u_unix.a libFEXCore.a libFEXCore_Base.a libdxmt_combined.a libfmt.a libxxhash.a libsoftfloat_3e.a libcephes_128bit.a; do
             MIN=50000
             case "$lib" in
-              libdxmt_combined.a) MIN=200 ;;
+              libdxmt_combined.a) MIN=40000 ;;
             esac
             if [[ -s "$HL/$lib" ]] && [[ $(wc -c < "$HL/$lib") -gt $MIN ]]; then
               FULL="$FULL -force_load $HL/$lib"
