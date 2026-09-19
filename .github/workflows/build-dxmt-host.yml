@@ -22,10 +22,10 @@ jobs:
   dxmt:
     name: Build libdxmt_combined.a
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Clone Madeira + research/dxmt
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=90
@@ -33,13 +33,15 @@ jobs:
           cd madeira
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
-          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow research/dxmt || true
-          ls research/dxmt/src/winemetal/unix 2>/dev/null || echo "winemetal unix missing"
-          ls madeira/build/dxmt-ios 2>/dev/null || ls build/dxmt-ios || true
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow research/dxmt
+          test -f research/dxmt/src/winemetal/unix/winemetal_unix.c
+          test -f build/dxmt-ios/build.sh
+          ls -la research/dxmt/src/winemetal/unix
+          ls -la research/dxmt/src/airconv | head
 
-      - name: Compile Madeira DXMT unix sources
+      - name: Compile Madeira DXMT unix sources (winemetal + airconv + DXBCParser)
         run: |
-          set -uo pipefail
+          set -euo pipefail
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           OUT="$GITHUB_WORKSPACE/host-libs"
           OBJ="$GITHUB_WORKSPACE/dxmt-obj"
@@ -48,10 +50,12 @@ jobs:
           DXMT_SRC="$DXMT_ROOT/src"
           COMMON="-arch arm64 -isysroot $SDK -miphoneos-version-min=17.0 -fblocks -O2 -fPIC"
           INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
+          INCLUDES_DX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
+          AIRDEFS="-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
 
           compile_objc() {
             local src=$1 name=$2
-            [ -f "$src" ] || { echo "  missing $name"; return 1; }
+            [ -f "$src" ] || { echo "MISSING $name ($src)" >&2; return 1; }
             echo -n "  objc $name... "
             if xcrun -sdk iphoneos clang $COMMON -x objective-c $INCLUDES \
               -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
@@ -59,74 +63,104 @@ jobs:
               return 0
             fi
             echo FAILED
-            head -20 "$OBJ/err-$name.txt" || true
+            cat "$OBJ/err-$name.txt" || true
             return 1
           }
 
           compile_cxx() {
             local src=$1 name=$2 extra="${3:-}"
-            [ -f "$src" ] || { echo "  missing cxx $name"; return 1; }
+            [ -f "$src" ] || { echo "MISSING cxx $name ($src)" >&2; return 1; }
             echo -n "  cxx  $name... "
             if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-exceptions -fno-rtti \
-              $INCLUDES -I"$DXMT_ROOT/include/native/directx" -I"$DXMT_ROOT/include/native/windows" \
-              $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              $INCLUDES $INCLUDES_DX $AIRDEFS $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
               echo OK
               return 0
             fi
             echo FAILED
-            head -16 "$OBJ/err-$name.txt" || true
+            head -30 "$OBJ/err-$name.txt" || true
             return 1
           }
 
-          compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix || true
-          compile_objc "$DXMT_SRC/winemetal/unix/cache.c" cache || true
+          echo "=== winemetal unix ==="
+          compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix
+          compile_objc "$DXMT_SRC/winemetal/unix/cache.c" cache
+          for src in "$DXMT_SRC/winemetal/unix"/*; do
+            [ -f "$src" ] || continue
+            case "$src" in
+              *.c|*.m|*.mm) ;;
+              *) continue ;;
+            esac
+            base=$(basename "$src")
+            name=${base%.*}
+            [ -f "$OBJ/$name.o" ] && continue
+            compile_objc "$src" "$name" || true
+          done
 
-          if [ -d "$DXMT_SRC/winemetal/unix" ]; then
-            for src in "$DXMT_SRC/winemetal/unix"/*; do
-              [ -f "$src" ] || continue
-              case "$src" in
-                *.c|*.m|*.mm) ;;
-                *) continue ;;
-              esac
-              base=$(basename "$src")
-              name=${base%.*}
-              [ -f "$OBJ/$name.o" ] && continue
-              compile_objc "$src" "$name" || true
-            done
+          echo "=== airconv ==="
+          AIR_FAIL=0
+          for cpp in airconv_context.cpp air_type.cpp air_signature.cpp air_operations.cpp \
+                     dxbc_converter.cpp dxbc_converter_gs.cpp dxbc_converter_ts.cpp \
+                     dxbc_converter_basicblock.cpp dxbc_converter_cfg.cpp \
+                     dxbc_instructions.cpp dxbc_signature.cpp metallib_writer.cpp; do
+            compile_cxx "$DXMT_SRC/airconv/$cpp" "${cpp%.cpp}" || AIR_FAIL=1
+          done
+          compile_cxx "$DXMT_SRC/airconv/nt/air_builder.cpp" air_builder || AIR_FAIL=1
+          compile_cxx "$DXMT_SRC/airconv/nt/dxbc_converter_base.cpp" dxbc_converter_base || AIR_FAIL=1
+          if [ -f "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" ]; then
+            compile_cxx "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" lower_16bit_texread || AIR_FAIL=1
           fi
 
-          if [ -d "$DXMT_SRC/airconv" ]; then
-            for cpp in airconv_context.cpp air_type.cpp air_signature.cpp air_operations.cpp \
-                       dxbc_converter.cpp dxbc_converter_gs.cpp dxbc_converter_ts.cpp \
-                       dxbc_converter_basicblock.cpp dxbc_converter_cfg.cpp \
-                       dxbc_instructions.cpp dxbc_signature.cpp metallib_writer.cpp; do
-              compile_cxx "$DXMT_SRC/airconv/$cpp" "${cpp%.cpp}" || true
-            done
-            compile_cxx "$DXMT_SRC/airconv/nt/air_builder.cpp" air_builder || true
-            compile_cxx "$DXMT_SRC/airconv/nt/dxbc_converter_base.cpp" dxbc_converter_base || true
-          fi
+          echo "=== DXBCParser ==="
+          for cpp in BlobContainer.cpp DXBCUtils.cpp ShaderBinary.cpp; do
+            src="$DXMT_ROOT/libs/DXBCParser/$cpp"
+            name=dxbc_$(basename "$cpp" .cpp)
+            if [ -f "$src" ]; then
+              echo -n "  cxx  $name... "
+              if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-rtti \
+                  $INCLUDES $INCLUDES_DX $AIRDEFS -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+                echo OK
+              else
+                echo FAILED
+                head -20 "$OBJ/err-$name.txt" || true
+                AIR_FAIL=1
+              fi
+            fi
+          done
 
           printf '%s\n' 'int dxmt_host_probe(void) { return 1; }' > "$OBJ/dxmt_host_probe.c"
           xcrun -sdk iphoneos clang $COMMON -c "$OBJ/dxmt_host_probe.c" -o "$OBJ/dxmt_host_probe.o"
 
+          test -f "$OBJ/winemetal_unix.o"
+          test -f "$OBJ/cache.o"
+          test -f "$OBJ/dxmt_host_probe.o"
+
           NOBJ=$(find "$OBJ" -name '*.o' -type f | wc -l | tr -d ' ')
-          echo "dxmt-objs=$NOBJ"
-          test "$NOBJ" -gt 0
+          echo "dxmt-objs=$NOBJ airconv_fail=$AIR_FAIL"
+          test "$NOBJ" -ge 3
+
           xcrun -sdk iphoneos ar rcs "$OUT/libdxmt_combined.a" "$OBJ"/*.o
-          ls -lh "$OUT/libdxmt_combined.a"
+          cp -v "$OUT/libdxmt_combined.a" "$OUT/libdxmt_unix.a"
+          ls -lh "$OUT"/*.a
           file "$OUT/libdxmt_combined.a"
+
           TMP=$(mktemp -d)
           (cd "$TMP" && ar x "$OUT/libdxmt_combined.a")
           echo "=== objects ==="
-          ls -l "$TMP" | head -40
-          echo "=== symbols (dxmt_host_probe / winemetal) ==="
-          nm -gU "$OUT/libdxmt_combined.a" | grep -E 'dxmt_host_probe|wine_unix|winemetal|MTL' | head -40 || true
+          ls -l "$TMP"
+          echo "=== file first object ==="
+          FIRST=$(ls "$TMP"/*.o | head -1)
+          file "$FIRST"
+          echo "$FIRST" | grep -q . 
+          file "$FIRST" | grep -E 'arm64|Mach-O'
+
+          echo "=== required symbols ==="
+          nm -gU "$OUT/libdxmt_combined.a" | tee "$OUT/libdxmt.nm" | head -80
+          grep -q 'dxmt_host_probe' "$OUT/libdxmt.nm"
+
           SZ=$(wc -c < "$OUT/libdxmt_combined.a")
           echo "size=$SZ"
-          test "$SZ" -gt 200
-          if [ -f "$DXMT_SRC/winemetal/unix/winemetal_unix.c" ]; then
-            test "$NOBJ" -ge 2
-          fi
+          # Probe-only archives are a few KB. Real winemetal+cache is tens of KB+.
+          test "$SZ" -gt 40000
 
       - name: Upload madeira-host-libs
         uses: actions/upload-artifact@v4
