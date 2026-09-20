@@ -8,10 +8,15 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <stdio.h>
+#include <stdint.h>
 
 static bool g_dxmt_ready = false;
 
 __attribute__((weak)) int dxmt_host_probe(void) {
+    return 0;
+}
+
+__attribute__((weak)) uint64_t madeira_get_present_count(void) {
     return 0;
 }
 
@@ -28,12 +33,15 @@ bool dxmt_initialize(void) {
         probe = dxmt_host_probe();
     }
     CAMetalLayer *layer = winios_metal_layer_for_hwnd(NULL);
+    uint64_t presents = madeira_get_present_count ? madeira_get_present_count() : 0;
     if (probe != 0) {
-        fprintf(stderr, "[DXMT] libdxmt_combined.a probe succeeded (device=%s layer=%p)\n",
-                [[device name] UTF8String] ?: "?", (__bridge void *)layer);
+        fprintf(stderr, "[DXMT] libdxmt_combined.a probe succeeded (device=%s layer=%p presents=%llu)\n",
+                [[device name] UTF8String] ?: "?", (__bridge void *)layer,
+                (unsigned long long)presents);
     } else {
-        fprintf(stderr, "[DXMT] Metal device present (%s); libdxmt_combined.a probe=0 layer=%p\n",
-                [[device name] UTF8String] ?: "?", (__bridge void *)layer);
+        fprintf(stderr, "[DXMT] Metal device present (%s); libdxmt_combined.a probe=0 layer=%p presents=%llu\n",
+                [[device name] UTF8String] ?: "?", (__bridge void *)layer,
+                (unsigned long long)presents);
     }
 
     /* Presentation proceeds through madeira_display_set_layer /
