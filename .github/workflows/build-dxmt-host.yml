@@ -17,15 +17,16 @@ permissions:
 env:
   MADEIRA_COMMIT: 97e2ce26e6dc9e4a38976f3b5deb9272d64558eb
   MADEIRA_REPO: https://github.com/willfaust/Madeira.git
+  LLVM_TAG: llvmorg-15.0.7
 
 jobs:
   dxmt:
     name: Build libdxmt_combined.a
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 180
     steps:
-      - name: Clone Madeira + research/dxmt
-        timeout-minutes: 20
+      - name: Clone Madeira + research/dxmt + nested headers
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=90
@@ -34,12 +35,78 @@ jobs:
           git fetch --depth 1 origin "$MADEIRA_COMMIT"
           git checkout "$MADEIRA_COMMIT"
           git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow research/dxmt
+          git -C research/dxmt submodule update --init --depth 1 --recommend-shallow include/native/directx || \
+            git -C research/dxmt submodule update --init --recursive --depth 1
           test -f research/dxmt/src/winemetal/unix/winemetal_unix.c
           test -f build/dxmt-ios/build.sh
-          ls -la research/dxmt/src/winemetal/unix
-          ls -la research/dxmt/src/airconv | head
+          echo "=== directx headers ==="
+          ls research/dxmt/include/native/directx | head || true
+          test -f research/dxmt/include/native/directx/d3d11.h \
+            || test -f research/dxmt/include/native/directx/include/d3d11.h \
+            || find research/dxmt/include -name 'd3d11.h' | tee /tmp/d3d11.path
+          test -s /tmp/d3d11.path || test -f research/dxmt/include/native/directx/d3d11.h
 
-      - name: Compile Madeira DXMT unix sources (winemetal + airconv + DXBCParser)
+      - name: Cache iOS LLVM 15
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/toolchains/llvm-ios-build
+            ${{ github.workspace }}/toolchains/llvm-host-tblgen
+          key: llvm15-ios-arm64-${{ env.LLVM_TAG }}-v2
+
+      - name: Build LLVM 15.0.7 host tblgen + iOS static libs
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        timeout-minutes: 140
+        run: |
+          set -euo pipefail
+          brew install ninja cmake || true
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          ROOT="$GITHUB_WORKSPACE/toolchains"
+          mkdir -p "$ROOT"
+          if [ ! -d "$ROOT/llvm-project/.git" ]; then
+            git clone --depth 1 --branch "$LLVM_TAG" https://github.com/llvm/llvm-project.git "$ROOT/llvm-project"
+          fi
+          ADD="$ROOT/llvm-project/llvm/cmake/modules/AddLLVM.cmake"
+          if grep -q 'MATCHES "Darwin"' "$ADD"; then
+            sed -i.bak 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' "$ADD" || true
+          fi
+          echo "=== host llvm-tblgen ==="
+          cmake -S "$ROOT/llvm-project/llvm" -B "$ROOT/llvm-host-tblgen" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TARGETS_TO_BUILD="" \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_BUILD_TOOLS=ON \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_BINDINGS=OFF
+          cmake --build "$ROOT/llvm-host-tblgen" --target llvm-tblgen -j 4
+          TBLGEN="$ROOT/llvm-host-tblgen/bin/llvm-tblgen"
+          test -x "$TBLGEN"
+          echo "=== iOS LLVM static libs ==="
+          cmake -S "$ROOT/llvm-project/llvm" -B "$ROOT/llvm-ios-build" -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$SDK" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TABLEGEN="$TBLGEN" \
+            -DLLVM_TARGETS_TO_BUILD="" \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_BUILD_TOOLS=OFF \
+            -DLLVM_BUILD_UTILS=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_BINDINGS=OFF \
+            -DLLVM_ENABLE_PIC=ON
+          cmake --build "$ROOT/llvm-ios-build" -j 4
+          test -d "$ROOT/llvm-ios-build/lib"
+          ls "$ROOT/llvm-ios-build/lib"/*.a | head
+          test -f "$ROOT/llvm-ios-build/include/llvm/Config/llvm-config.h"
+
+      - name: Compile Madeira DXMT unix + airconv + DXBCParser + LLVM combine
         run: |
           set -euo pipefail
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -48,11 +115,25 @@ jobs:
           mkdir -p "$OUT" "$OBJ"
           DXMT_ROOT="$GITHUB_WORKSPACE/madeira/research/dxmt"
           DXMT_SRC="$DXMT_ROOT/src"
+          LLVM_SRC="$GITHUB_WORKSPACE/toolchains/llvm-project/llvm"
+          LLVM_BUILD="$GITHUB_WORKSPACE/toolchains/llvm-ios-build"
+          if [ ! -d "$LLVM_SRC/include" ]; then
+            git clone --depth 1 --branch "$LLVM_TAG" https://github.com/llvm/llvm-project.git "$GITHUB_WORKSPACE/toolchains/llvm-project"
+          fi
+          test -d "$LLVM_BUILD/include"
+          test -d "$LLVM_BUILD/lib"
+          D3D_INC=""
+          if [ -f "$DXMT_ROOT/include/native/directx/d3d11.h" ]; then
+            D3D_INC="-I$DXMT_ROOT/include/native/directx"
+          else
+            D3D_DIR=$(find "$DXMT_ROOT/include" -name d3d11.h -print -quit | xargs dirname)
+            D3D_INC="-I$D3D_DIR"
+          fi
           COMMON="-arch arm64 -isysroot $SDK -miphoneos-version-min=17.0 -fblocks -O2 -fPIC"
           INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
-          INCLUDES_DX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
+          INCLUDES_DX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows $D3D_INC"
+          LLVM_INCLUDES="-I$LLVM_BUILD/include -I$LLVM_SRC/include"
           AIRDEFS="-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
-
           compile_objc() {
             local src=$1 name=$2
             [ -f "$src" ] || { echo "MISSING $name ($src)" >&2; return 1; }
@@ -66,36 +147,22 @@ jobs:
             cat "$OBJ/err-$name.txt" || true
             return 1
           }
-
           compile_cxx() {
             local src=$1 name=$2 extra="${3:-}"
             [ -f "$src" ] || { echo "MISSING cxx $name ($src)" >&2; return 1; }
             echo -n "  cxx  $name... "
             if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-exceptions -fno-rtti \
-              $INCLUDES $INCLUDES_DX $AIRDEFS $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              $INCLUDES $INCLUDES_DX $LLVM_INCLUDES $AIRDEFS $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
               echo OK
               return 0
             fi
             echo FAILED
-            head -30 "$OBJ/err-$name.txt" || true
+            head -40 "$OBJ/err-$name.txt" || true
             return 1
           }
-
           echo "=== winemetal unix ==="
           compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix
           compile_objc "$DXMT_SRC/winemetal/unix/cache.c" cache
-          for src in "$DXMT_SRC/winemetal/unix"/*; do
-            [ -f "$src" ] || continue
-            case "$src" in
-              *.c|*.m|*.mm) ;;
-              *) continue ;;
-            esac
-            base=$(basename "$src")
-            name=${base%.*}
-            [ -f "$OBJ/$name.o" ] && continue
-            compile_objc "$src" "$name" || true
-          done
-
           echo "=== airconv ==="
           AIR_FAIL=0
           for cpp in airconv_context.cpp air_type.cpp air_signature.cpp air_operations.cpp \
@@ -109,58 +176,43 @@ jobs:
           if [ -f "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" ]; then
             compile_cxx "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" lower_16bit_texread || AIR_FAIL=1
           fi
-
           echo "=== DXBCParser ==="
           for cpp in BlobContainer.cpp DXBCUtils.cpp ShaderBinary.cpp; do
             src="$DXMT_ROOT/libs/DXBCParser/$cpp"
             name=dxbc_$(basename "$cpp" .cpp)
-            if [ -f "$src" ]; then
-              echo -n "  cxx  $name... "
-              if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-rtti \
-                  $INCLUDES $INCLUDES_DX $AIRDEFS -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
-                echo OK
-              else
-                echo FAILED
-                head -20 "$OBJ/err-$name.txt" || true
-                AIR_FAIL=1
-              fi
+            echo -n "  cxx  $name... "
+            if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-rtti \
+                $INCLUDES $INCLUDES_DX $LLVM_INCLUDES $AIRDEFS -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              echo OK
+            else
+              echo FAILED
+              head -30 "$OBJ/err-$name.txt" || true
+              AIR_FAIL=1
             fi
           done
-
           printf '%s\n' 'int dxmt_host_probe(void) { return 1; }' > "$OBJ/dxmt_host_probe.c"
           xcrun -sdk iphoneos clang $COMMON -c "$OBJ/dxmt_host_probe.c" -o "$OBJ/dxmt_host_probe.o"
-
           test -f "$OBJ/winemetal_unix.o"
           test -f "$OBJ/cache.o"
-          test -f "$OBJ/dxmt_host_probe.o"
-
+          test -f "$OBJ/airconv_context.o"
+          test -f "$OBJ/dxbc_converter.o"
+          test "$AIR_FAIL" -eq 0
           NOBJ=$(find "$OBJ" -name '*.o' -type f | wc -l | tr -d ' ')
-          echo "dxmt-objs=$NOBJ airconv_fail=$AIR_FAIL"
-          test "$NOBJ" -ge 3
-
-          xcrun -sdk iphoneos ar rcs "$OUT/libdxmt_combined.a" "$OBJ"/*.o
+          echo "dxmt-objs=$NOBJ"
+          test "$NOBJ" -ge 16
+          echo "=== combining with iOS LLVM static libs ==="
+          xcrun -sdk iphoneos libtool -static -o "$OUT/libdxmt_combined.a" \
+            "$OBJ"/*.o "$LLVM_BUILD"/lib/libLLVM*.a
           cp -v "$OUT/libdxmt_combined.a" "$OUT/libdxmt_unix.a"
           ls -lh "$OUT"/*.a
           file "$OUT/libdxmt_combined.a"
-
-          TMP=$(mktemp -d)
-          (cd "$TMP" && ar x "$OUT/libdxmt_combined.a")
-          echo "=== objects ==="
-          ls -l "$TMP"
-          echo "=== file first object ==="
-          FIRST=$(ls "$TMP"/*.o | head -1)
-          file "$FIRST"
-          echo "$FIRST" | grep -q . 
-          file "$FIRST" | grep -E 'arm64|Mach-O'
-
           echo "=== required symbols ==="
           nm -gU "$OUT/libdxmt_combined.a" | tee "$OUT/libdxmt.nm" | head -80
           grep -q 'dxmt_host_probe' "$OUT/libdxmt.nm"
-
+          grep -E -q 'dxmt_winemetal_unix_call_funcs|madeira_get_present_count' "$OUT/libdxmt.nm"
           SZ=$(wc -c < "$OUT/libdxmt_combined.a")
           echo "size=$SZ"
-          # Probe-only archives are a few KB. Real winemetal+cache is tens of KB+.
-          test "$SZ" -gt 40000
+          test "$SZ" -gt 5000000
 
       - name: Upload madeira-host-libs
         uses: actions/upload-artifact@v4
