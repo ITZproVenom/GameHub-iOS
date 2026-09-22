@@ -58,6 +58,11 @@ targets:
           - AVFoundation
           - -framework
           - AudioToolbox
+          - -framework
+          - IOKit
+          - -weak_framework
+          - MetalFX
+          - -lsqlite3
           - -lz
           - -lc++
     scheme:
