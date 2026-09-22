@@ -2,19 +2,17 @@
  * Public API (wineserver_start, wine_process_start, fex_*, madeira_extract_*)
  * is provided by WineServerBridge.m / WineProcessBridge.m / FEXBridge.mm /
  * PrefixExtractor.c.
- *
- * Strong symbols here are only those the IPA-copied Madeira bridges reference
- * that are otherwise provided by libwineserver.a / Winios.m when those are linked.
  */
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
+#if defined(__APPLE__)
+#include <libkern/OSCacheControl.h>
+#endif
 
-/* Defined here (strong) so Swift MadeiraBootSequence can set ws_log_quiet
- * even when the Madeira wineserver archive is not linked. */
 volatile int ws_log_quiet = 0;
 
-/* Weak definition so FEXBridge.mm can probe FEXCore without a hard link error. */
 __attribute__((weak)) int fex_core_probe(void) {
     return 0;
 }
@@ -49,9 +47,6 @@ __attribute__((weak)) volatile uint64_t g_madeira_hot_count[64] = {0};
 __attribute__((weak)) volatile uint64_t g_madeira_syscall_count[32] = {0};
 __attribute__((weak)) volatile int g_madeira_ios_host = 1;
 
-/* IPA workflow copies Madeira WineProcessBridge.m / IOSDisplayShim.m which
- * call these. Real implementations live in libwineserver.a and Winios.m;
- * weak fallbacks keep the unsigned IPA linking when those archives are absent. */
 __attribute__((weak)) void wineserver_inject_client_fd(int fd) {
     fprintf(stderr, "[GameHub] wineserver_inject_client_fd(%d): libwineserver.a not linked\n", fd);
 }
@@ -60,4 +55,23 @@ __attribute__((weak)) void winios_freeze_watch_start(void) {
     fprintf(stderr, "[GameHub] winios_freeze_watch_start: Winios.m not linked\n");
 }
 
-/* winios_metal_layer_for_hwnd is provided by IOSDisplayShim.m */
+/* Symbols pulled in when force-loading libntdll_unix.a on iOS. */
+__attribute__((weak)) const char wine_build[] = "GameHub-iOS Madeira host";
+__attribute__((weak)) volatile int winios_phase = 0;
+
+__attribute__((weak)) void win32u_unix_lib_init(void) {
+    fprintf(stderr, "[GameHub] win32u_unix_lib_init: libwin32u_unix.a not linked\n");
+}
+
+/* unixlib dispatch tables — empty so ntdll unixlib lookups fail closed. */
+__attribute__((weak)) void *bcrypt_unix_call_funcs[] = { NULL };
+__attribute__((weak)) void *crypt32_unix_call_funcs[] = { NULL };
+__attribute__((weak)) void *dwrite_unix_call_funcs[] = { NULL };
+__attribute__((weak)) void *secur32_unix_call_funcs[] = { NULL };
+
+#if defined(__APPLE__)
+void __clear_cache(void *start, void *end) {
+    if (!start || !end || end <= start) return;
+    sys_icache_invalidate(start, (size_t)((char *)end - (char *)start));
+}
+#endif
