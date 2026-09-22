@@ -150,9 +150,39 @@ jobs:
             D3D_DIR=$(find "$DXMT_ROOT/include" -name d3d11.h -print -quit | xargs dirname)
             D3D_INC="-I$D3D_DIR"
           fi
+          SHDR="$OBJ/shader-headers"
+          mkdir -p "$SHDR"
+          echo "=== generate airconv shader headers (xxd of AIR bitcode) ==="
+          xcodebuild -downloadComponent MetalToolchain || true
+          SHADER_DIR="$DXMT_SRC/airconv/shaders"
+          ls -la "$SHADER_DIR" || true
+          for name in air_msad air_samplepos air_tessellation; do
+            src="$SHADER_DIR/${name}.metal"
+            test -f "$src"
+            air="$SHDR/${name}.air"
+            hdr="$SHDR/${name}.h"
+            set +e
+            xcrun -sdk macosx metal -std=metal3.1 --target=air64-apple-macos14.0 -c "$src" -o "$air" 2>"$SHDR/${name}.metal.err"
+            rc=$?
+            if [ $rc -ne 0 ]; then
+              xcrun -sdk iphoneos metal -std=metal3.1 -c "$src" -o "$air" 2>>"$SHDR/${name}.metal.err"
+              rc=$?
+            fi
+            set -e
+            if [ $rc -ne 0 ] || [ ! -s "$air" ]; then
+              echo "FAILED metal compile $name" >&2
+              cat "$SHDR/${name}.metal.err" >&2 || true
+              exit 1
+            fi
+            xxd -n "$name" -i "$air" "$hdr"
+            test -s "$hdr"
+            grep -q "$name" "$hdr"
+            echo "  header $name.h ($(wc -c < "$hdr" | tr -d ' ') bytes)"
+          done
           COMMON="-arch arm64 -isysroot $SDK -miphoneos-version-min=17.0 -fblocks -O2 -fPIC"
           INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
           INCLUDES_DX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows $D3D_INC"
+          INCLUDES_SHADERS="-I$SHDR"
           LLVM_INCLUDES="-I$LLVM_BUILD/include -I$LLVM_SRC/include"
           AIRDEFS="-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
           compile_objc() {
@@ -173,7 +203,7 @@ jobs:
             [ -f "$src" ] || { echo "MISSING cxx $name ($src)" >&2; return 1; }
             echo -n "  cxx  $name... "
             if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-exceptions -fno-rtti \
-              $INCLUDES $INCLUDES_DX $LLVM_INCLUDES $AIRDEFS $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+              $INCLUDES $INCLUDES_DX $INCLUDES_SHADERS $LLVM_INCLUDES $AIRDEFS $extra -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
               echo OK
               return 0
             fi
@@ -197,13 +227,21 @@ jobs:
           if [ -f "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" ]; then
             compile_cxx "$DXMT_SRC/airconv/transforms/lower_16bit_texread.cpp" lower_16bit_texread || AIR_FAIL=1
           fi
+          if [ -f "$DXMT_SRC/airconv/transforms/simdgroup_implicit_membarrier.cpp" ]; then
+            compile_cxx "$DXMT_SRC/airconv/transforms/simdgroup_implicit_membarrier.cpp" simdgroup_implicit_membarrier || AIR_FAIL=1
+          fi
+          for extra in dxbc_binding_sm50.cpp dxbc_binding_rootsig.cpp; do
+            if [ -f "$DXMT_SRC/airconv/$extra" ]; then
+              compile_cxx "$DXMT_SRC/airconv/$extra" "${extra%.cpp}" || AIR_FAIL=1
+            fi
+          done
           echo "=== DXBCParser ==="
           for cpp in BlobContainer.cpp DXBCUtils.cpp ShaderBinary.cpp; do
             src="$DXMT_ROOT/libs/DXBCParser/$cpp"
             name=dxbc_$(basename "$cpp" .cpp)
             echo -n "  cxx  $name... "
             if xcrun -sdk iphoneos clang++ $COMMON -std=c++20 -fno-rtti \
-                $INCLUDES $INCLUDES_DX $LLVM_INCLUDES $AIRDEFS -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
+                $INCLUDES $INCLUDES_DX $INCLUDES_SHADERS $LLVM_INCLUDES $AIRDEFS -c "$src" -o "$OBJ/$name.o" 2>"$OBJ/err-$name.txt"; then
               echo OK
             else
               echo FAILED
