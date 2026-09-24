@@ -9,11 +9,30 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <stdio.h>
 #include <stdint.h>
+#include <dlfcn.h>
 
 static bool g_dxmt_ready = false;
 
+/* Prefer a strong symbol from libdxmt_combined.a. If the archive does not
+ * export dxmt_host_probe, scan the process image for DXMT/winemetal symbols
+ * so initialize reports whether the host translation objects actually linked. */
 __attribute__((weak)) int dxmt_host_probe(void) {
-    return 0;
+    void *self = dlopen(NULL, RTLD_LAZY);
+    if (!self) return 0;
+    static const char *names[] = {
+        "dxmt_host_probe",
+        "dxmt_initialize_device",
+        "winemetal_unix_call",
+        "dxmt_create_device",
+        "MTLCreateSystemDefaultDevice",
+        NULL
+    };
+    int hits = 0;
+    for (int i = 0; names[i]; i++) {
+        if (dlsym(self, names[i])) hits++;
+    }
+    /* MTLCreateSystemDefaultDevice always exists on iOS; require another hit. */
+    return hits > 1 ? 1 : 0;
 }
 
 __attribute__((weak)) uint64_t madeira_get_present_count(void) {
