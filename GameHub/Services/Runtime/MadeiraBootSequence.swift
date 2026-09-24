@@ -193,7 +193,9 @@ enum MadeiraBootSequence {
         let fm = FileManager.default
         let driveC = URL(fileURLWithPath: prefixPath).appendingPathComponent("drive_c", isDirectory: true)
         try? fm.createDirectory(at: driveC, withIntermediateDirectories: true)
-        let dest = driveC.appendingPathComponent(exe.lastPathComponent)
+        let gamesDir = driveC.appendingPathComponent("GameHub", isDirectory: true)
+        try? fm.createDirectory(at: gamesDir, withIntermediateDirectories: true)
+        let dest = gamesDir.appendingPathComponent(exe.lastPathComponent)
         if fm.fileExists(atPath: dest.path) {
             try? fm.removeItem(at: dest)
         }
@@ -203,6 +205,6 @@ enum MadeiraBootSequence {
             try? fm.copyItem(at: exe, to: dest)
         }
         NSLog("[GameHub] placed executable at \(dest.path)")
-        return "C:\\" + exe.lastPathComponent
+        return "C:\\GameHub\\" + exe.lastPathComponent
     }
 }
