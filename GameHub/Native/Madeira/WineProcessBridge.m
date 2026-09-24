@@ -142,3 +142,214 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_install_pe_runtime(fm, prefix);
     }
 }
+
+static int split_quoted(char *src, char **out, int maxn) {
+    int n = 0;
+    char *p = src;
+    while (*p && n < maxn) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        if (*p == '"' || *p == '\'') {
+            char q = *p++;
+            out[n++] = p;
+            while (*p && *p != q) p++;
+            if (*p) *p++ = 0;
+        } else {
+            out[n++] = p;
+            while (*p && *p != ' ' && *p != '\t') p++;
+            if (*p) *p++ = 0;
+        }
+    }
+    return n;
+}
+
+static void *wine_process_thread(void *arg) {
+    (void)arg;
+    @autoreleasepool {
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        LOG("Wine process thread started");
+
+        madeira_seed_prefix_if_needed(g_prefix_path);
+
+        setenv("WINEPREFIX", g_prefix_path, 1);
+        setenv("HOME", g_prefix_path, 1);
+        setenv("WINELOADERNOEXEC", "1", 1);
+        setenv("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d10,d3d10_1,d3d10core=n,b", 1);
+        setenv("DXMT_CONFIG", "d3d11.presentInterval=0", 1);
+        setenv("DXMT_METAL_LAYER", "1", 1);
+        if (g_env_block && g_env_block[0]) {
+            char *copy = strdup(g_env_block);
+            char *save = NULL;
+            for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+                char *eq = strchr(line, '=');
+                if (!eq || eq == line) continue;
+                *eq = 0;
+                setenv(line, eq + 1, 1);
+                *eq = '=';
+            }
+            free(copy);
+        }
+
+        {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+            NSMutableArray<NSString *> *dllDirs = [NSMutableArray array];
+            NSArray<NSString *> *candidates = @[
+                [bundlePath stringByAppendingPathComponent:@"Runtime/arm64ec-windows"],
+                [bundlePath stringByAppendingPathComponent:@"Runtime/aarch64-windows"],
+                [bundlePath stringByAppendingPathComponent:@"Runtime"],
+                bundlePath,
+            ];
+            if (g_prefix_path) {
+                NSString *prefix = [NSString stringWithUTF8String:g_prefix_path];
+                [dllDirs addObject:[prefix stringByAppendingPathComponent:@"drive_c/windows/system32"]];
+            }
+            for (NSString *p in candidates) {
+                if ([fm fileExistsAtPath:p]) {
+                    [dllDirs addObject:p];
+                }
+            }
+            NSString *joined = [dllDirs componentsJoinedByString:@":"];
+            setenv("WINEDLLPATH", joined.UTF8String, 1);
+            LOG("WINEDLLPATH=%{public}s", joined.UTF8String);
+        }
+
+        {
+            NSError *audioErr = nil;
+            AVAudioSession *session = [AVAudioSession sharedInstance];
+            [session setCategory:AVAudioSessionCategoryPlayback
+                            mode:AVAudioSessionModeDefault
+                         options:AVAudioSessionCategoryOptionMixWithOthers
+                           error:&audioErr];
+            [session setActive:YES error:&audioErr];
+            if (audioErr) {
+                LOG("AVAudioSession: %{public}@", audioErr);
+            }
+        }
+
+        {
+            int64_t off = fex_get_jit_write_offset();
+            if (off != 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%lld", (long long)off);
+                setenv("MADEIRA_JIT_WRITE_OFFSET", buf, 1);
+            }
+        }
+
+        if (winios_freeze_watch_start) {
+            winios_freeze_watch_start();
+        }
+
+        if (__wine_main == NULL) {
+            LOG("FATAL: __wine_main is NULL — libntdll_unix.a not linked. Cannot start Wine process.");
+            g_wine_running = 0;
+            return NULL;
+        }
+
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *logPath = [docs stringByAppendingPathComponent:@"madeira-wine.log"];
+        if (wine_log_set_file) {
+            wine_log_set_file(logPath.UTF8String);
+        }
+
+        const char *target = (g_exe_winpath && g_exe_winpath[0]) ? g_exe_winpath : "explorer.exe";
+        char *argv_buf[32];
+        int argc_fill = 0;
+        argv_buf[argc_fill++] = "wine";
+        argv_buf[argc_fill++] = (char *)target;
+        if (g_extra_args && g_extra_args[0]) {
+            char *acopy = strdup(g_extra_args);
+            argc_fill += split_quoted(acopy, &argv_buf[argc_fill], 30 - argc_fill);
+        }
+        argv_buf[argc_fill] = NULL;
+        char **argv = argv_buf;
+        int argc = argc_fill;
+
+        LOG("Calling __wine_main (%{public}s) argc=%d ...", target, argc);
+        wine_ios_exit_initialized = 1;
+        wine_ios_main_thread = pthread_self();
+        if (setjmp(wine_ios_exit_jmpbuf) == 0) {
+            __wine_main(argc, argv);
+        }
+        LOG("__wine_main returned / longjmp exit_code=%d", wine_ios_exit_code);
+        g_wine_running = 0;
+    }
+    return NULL;
+}
+
+static int wine_process_start_common(const char *prefix_path) {
+    if (g_wine_running) {
+        LOG("Wine process already running");
+        return 0;
+    }
+    if (!prefix_path) return -1;
+
+    if (g_prefix_path) free(g_prefix_path);
+    g_prefix_path = strdup(prefix_path);
+
+    if (wineserver_is_running() == 0) {
+        LOG("wineserver not running — starting it");
+        if (wineserver_start(prefix_path) != 0) {
+            LOG("wineserver_start failed");
+            return -1;
+        }
+        for (int i = 0; i < 50; i++) {
+            if (wineserver_is_running()) break;
+            usleep(50000);
+        }
+        if (!wineserver_is_running()) {
+            LOG("wineserver never became ready");
+            return -1;
+        }
+    }
+
+    g_wine_running = 1;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_set_qos_class_np(&attr, QOS_CLASS_USER_INTERACTIVE, 0);
+    int ret = pthread_create(&g_wine_thread, &attr, wine_process_thread, NULL);
+    pthread_attr_destroy(&attr);
+    if (ret != 0) {
+        LOG("pthread_create wine_process failed: %d", ret);
+        g_wine_running = 0;
+        return -1;
+    }
+    LOG("Wine process thread created");
+    return 0;
+}
+
+void wine_process_configure(const char *extra_args, const char *env_block) {
+    if (g_extra_args) { free(g_extra_args); g_extra_args = NULL; }
+    if (g_env_block) { free(g_env_block); g_env_block = NULL; }
+    if (extra_args && extra_args[0]) g_extra_args = strdup(extra_args);
+    if (env_block && env_block[0]) g_env_block = strdup(env_block);
+}
+
+int wine_process_start(const char *prefix_path) {
+    return wine_process_start_common(prefix_path);
+}
+
+int wine_process_start_exe(const char *prefix_path, const char *exe_path) {
+    if (g_exe_winpath) {
+        free(g_exe_winpath);
+        g_exe_winpath = NULL;
+    }
+    if (exe_path && exe_path[0]) {
+        g_exe_winpath = strdup(exe_path);
+        LOG("wine_process_start_exe target=%{public}s", exe_path);
+    }
+    return wine_process_start_common(prefix_path);
+}
+
+int wine_process_is_running(void) {
+    return g_wine_running;
+}
+
+int madeira_write_continue_flag(void) {
+    if (!g_prefix_path) return -1;
+    @autoreleasepool {
+        NSString *path = [NSString stringWithUTF8String:g_prefix_path];
+        path = [path stringByAppendingPathComponent:@"drive_c/madeira-continue.flag"];
+        return [@"1" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil] ? 0 : -1;
+    }
+}
