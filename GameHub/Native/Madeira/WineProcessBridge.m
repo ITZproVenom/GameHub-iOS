@@ -86,7 +86,7 @@ static void madeira_install_pe_runtime(NSFileManager *fm, NSString *prefix) {
             if ([fm copyItemAtPath:src toPath:dst error:&err]) {
                 copied++;
             } else if (err) {
-                LOG("PE copy %{public}s failed: %{public}@", name, err);
+                LOG("PE copy %{public}@ failed: %{public}@", name, err);
             }
         }
     }
