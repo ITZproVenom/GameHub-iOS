@@ -177,6 +177,8 @@ static void *wine_process_thread(void *arg) {
         setenv("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d10,d3d10_1,d3d10core=n,b", 1);
         setenv("DXMT_CONFIG", "d3d11.presentInterval=0", 1);
         setenv("DXMT_METAL_LAYER", "1", 1);
+        setenv("MADEIRA_XINPUT", "1", 1);
+        setenv("MADEIRA_DESKTOP", "0", 1);
         if (g_env_block && g_env_block[0]) {
             char *copy = strdup(g_env_block);
             char *save = NULL;
