@@ -5,3 +5,4 @@
 #import "FEXBridge.h"
 #import "PrefixExtractor.h"
 #import "DXMTBridge.h"
+#import "WiniosGamepad.h"

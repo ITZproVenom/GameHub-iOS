@@ -7,9 +7,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
+#include <pthread.h>
 #if defined(__APPLE__)
 #include <libkern/OSCacheControl.h>
 #endif
+#include "WiniosGamepad.h"
 
 volatile int ws_log_quiet = 0;
 
@@ -55,7 +58,6 @@ __attribute__((weak)) void winios_freeze_watch_start(void) {
     fprintf(stderr, "[GameHub] winios_freeze_watch_start: Winios.m not linked\n");
 }
 
-/* Symbols pulled in when force-loading libntdll_unix.a on iOS. */
 __attribute__((weak)) const char wine_build[] = "GameHub-iOS Madeira host";
 __attribute__((weak)) volatile int winios_phase = 0;
 
@@ -63,7 +65,6 @@ __attribute__((weak)) void win32u_unix_lib_init(void) {
     fprintf(stderr, "[GameHub] win32u_unix_lib_init: libwin32u_unix.a not linked\n");
 }
 
-/* unixlib dispatch tables — empty so ntdll unixlib lookups fail closed. */
 __attribute__((weak)) void *bcrypt_unix_call_funcs[] = { NULL };
 __attribute__((weak)) void *crypt32_unix_call_funcs[] = { NULL };
 __attribute__((weak)) void *dwrite_unix_call_funcs[] = { NULL };
@@ -75,3 +76,40 @@ void __clear_cache(void *start, void *end) {
     sys_icache_invalidate(start, (size_t)((char *)end - (char *)start));
 }
 #endif
+
+/* Madeira XInput snapshot (win32u polls winios_gamepad_get_state). */
+static pthread_mutex_t pad_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct winios_gamepad pads[WINIOS_GAMEPAD_MAX];
+
+void winios_gamepad_set_state(int index, const struct winios_gamepad *state)
+{
+    struct winios_gamepad next = {0};
+    if (index < 0 || index >= WINIOS_GAMEPAD_MAX) return;
+    if (state && state->connected) {
+        next = *state;
+        next.connected = 1;
+        memset(next.reserved, 0, sizeof(next.reserved));
+    }
+    pthread_mutex_lock(&pad_lock);
+    next.packet = pads[index].packet;
+    if (memcmp(&next, &pads[index], sizeof(next))) {
+        next.packet++;
+        pads[index] = next;
+    }
+    pthread_mutex_unlock(&pad_lock);
+}
+
+int winios_gamepad_get_state(int index, struct winios_gamepad *out)
+{
+    struct winios_gamepad value = {0};
+    if (index >= 0 && index < WINIOS_GAMEPAD_MAX) {
+        pthread_mutex_lock(&pad_lock);
+        value = pads[index];
+        pthread_mutex_unlock(&pad_lock);
+    }
+    if (out) {
+        if (value.connected) *out = value;
+        else memset(out, 0, sizeof(*out));
+    }
+    return value.connected != 0;
+}
